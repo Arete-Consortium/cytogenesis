@@ -165,11 +165,13 @@ export default function GameCanvas() {
     let hoveredId: string | null = null;
     let draggingId: string | null = null;
 
-    // Cap DPR at 2 — phones with 3× displays (recent iPhones, Pixel Pros)
-    // double the pixel work for negligible visual gain on a free-floating
-    // particle scene. Keeps mobile fps comfortable.
-    const computeDpr = () => Math.min(window.devicePixelRatio || 1, 2);
-    let dpr = computeDpr();
+    // 1:1 canvas — DPR scaling caused screen-space draws (drawBackground
+    // etc.) to only fill 1/dpr of the internal canvas on iPhone DPR=2,
+    // creating a "dark box" in the upper-left quadrant while motion
+    // trails accumulated everywhere else. Trading some retina sharpness
+    // for a guaranteed-correct render is the right call for a particle
+    // game.
+    const dpr = 1;
     let width = 0;
     let height = 0;
 
@@ -204,11 +206,11 @@ export default function GameCanvas() {
     };
 
     const resize = () => {
-      dpr = computeDpr();
       width = canvas.clientWidth;
       height = canvas.clientHeight;
-      canvas.width = Math.floor(width * dpr);
-      canvas.height = Math.floor(height * dpr);
+      // Internal canvas dims = CSS dims (1:1, no DPR scaling).
+      canvas.width = Math.floor(width);
+      canvas.height = Math.floor(height);
       world.setViewport(width, height);
       if (world.camera.x === 0 && world.camera.y === 0) {
         // Snap camera to center on first sizing so the lerp doesn't
@@ -407,13 +409,12 @@ export default function GameCanvas() {
       world.tick(dt);
       world.captureNearby();
 
-      // Set the screen-space transform at the START of the frame so
-      // drawBackground / drawAmbientPlankton fill in CSS coords that
-      // correctly scale to internal pixels (canvas.width = CSS × dpr).
-      // Without this, on DPR=2 iPhone the bg fill only covered the
-      // upper-left quadrant ("dark box") and the rest accumulated
-      // motion trails.
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      // Reset transform to identity + clear the entire canvas. With
+      // 1:1 sizing this guarantees no leftover pixels from the
+      // previous frame in any region. drawBackground then paints the
+      // ocean fill on top of the cleared canvas.
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
       drawBackground(ctx, width, height, world.tickN, world.biomeStage);
       drawAmbientPlankton(ctx, width, height, world.tickN);
       ctx.save();
