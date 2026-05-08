@@ -88,7 +88,6 @@ const PART_BLURB: Record<string, string> = {
 interface Toast {
   id: number;
   text: string;
-  expiresAt: number;
 }
 
 let nextToastId = 1;
@@ -112,14 +111,19 @@ export default function GameCanvas() {
   const hasRecordedRef = useRef(false);
 
   // Initialize mute + tutorial + theme from localStorage on mount.
+  // SSR-safe hydration: deferring these reads to an effect avoids a
+  // hydration mismatch (server has no localStorage). The
+  // set-state-in-effect rule flags this, but it's the canonical pattern.
   useEffect(() => {
     if (typeof window === "undefined") return;
     const m = localStorage.getItem(MUTE_KEY) === "1";
-    setMuted(m);
     audio.setMuted(m);
-    setShowTutorial(localStorage.getItem(TUTORIAL_KEY) !== "1");
     const saved = localStorage.getItem(THEME_KEY) as ThemeId | null;
     setTheme(saved === "galactic" ? "galactic" : "aquatic");
+    /* eslint-disable react-hooks/set-state-in-effect */
+    setMuted(m);
+    setShowTutorial(localStorage.getItem(TUTORIAL_KEY) !== "1");
+    /* eslint-enable react-hooks/set-state-in-effect */
   }, []);
 
   const selectEditorKind = (kind: string) => {
@@ -187,11 +191,7 @@ export default function GameCanvas() {
 
   // Helper accessible inside the rAF loop to push a centered toast.
   const queueToast = (text: string) => {
-    const toast: Toast = {
-      id: nextToastId++,
-      text,
-      expiresAt: performance.now() + 1700,
-    };
+    const toast: Toast = { id: nextToastId++, text };
     setToasts((prev) => [...prev, toast]);
     setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== toast.id));
@@ -199,7 +199,6 @@ export default function GameCanvas() {
   };
 
   useEffect(() => {
-    setToasts([]);
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
@@ -209,7 +208,7 @@ export default function GameCanvas() {
     worldRef.current = world;
     setPaused(false);
     let hoveredId: string | null = null;
-    let draggingId: string | null = null;
+    const draggingId: string | null = null;
 
     // 1:1 canvas — DPR scaling caused screen-space draws (drawBackground
     // etc.) to only fill 1/dpr of the internal canvas on iPhone DPR=2,
@@ -430,12 +429,18 @@ export default function GameCanvas() {
     // ── rAF loop ─────────────────────────────────────────────────────
     let raf = 0;
     let tick = 0;
-    let lastT = performance.now();
+    // Initialised on first rAF callback so we use the loop's `t` argument
+    // instead of calling `performance.now()` during effect setup.
+    let lastT = -1;
     let frameMs = 0;
     let fpsAccum = 0;
-    let lastStatPush = lastT;
+    let lastStatPush = -1;
 
     const loop = (t: number) => {
+      if (lastT < 0) {
+        lastT = t;
+        lastStatPush = t;
+      }
       const dt = t - lastT;
       lastT = t;
       frameMs = dt;
@@ -620,6 +625,7 @@ export default function GameCanvas() {
   const restart = () => {
     hasRecordedRef.current = false;
     setBestResult({ best: null, isNewBest: false });
+    setToasts([]);
     setRunId((r) => r + 1);
   };
 

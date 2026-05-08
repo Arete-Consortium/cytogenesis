@@ -13,6 +13,8 @@ export default function ThemePicker() {
     const saved = localStorage.getItem(THEME_KEY) as ThemeId | null;
     const id: ThemeId = saved === "galactic" ? "galactic" : "aquatic";
     setTheme(id);
+    // SSR-safe hydration: mirror localStorage into React state on mount.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setActive(id);
   }, []);
 
