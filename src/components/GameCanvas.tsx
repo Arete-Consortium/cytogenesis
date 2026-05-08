@@ -407,6 +407,13 @@ export default function GameCanvas() {
       world.tick(dt);
       world.captureNearby();
 
+      // Set the screen-space transform at the START of the frame so
+      // drawBackground / drawAmbientPlankton fill in CSS coords that
+      // correctly scale to internal pixels (canvas.width = CSS × dpr).
+      // Without this, on DPR=2 iPhone the bg fill only covered the
+      // upper-left quadrant ("dark box") and the rest accumulated
+      // motion trails.
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       drawBackground(ctx, width, height, world.tickN, world.biomeStage);
       drawAmbientPlankton(ctx, width, height, world.tickN);
       ctx.save();
