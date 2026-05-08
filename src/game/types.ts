@@ -41,6 +41,12 @@ export interface Body extends SimulationNodeDatum {
   bossKind?: BossKind;
   /** Centipede segment marker: index in chain (0 = head, 1+ = segments). */
   segmentIndex?: number;
+  /** Free-cell wander heading (rad) — drifts slowly so motion has intent
+   *  instead of pure jitter. */
+  wanderAngle?: number;
+  /** Free-cell tempo phase — drives a slow speed pulse so the cell
+   *  breathes in/out instead of moving at constant cadence. */
+  tempoPhase?: number;
 }
 
 /** Camera transform — matches d3.zoomTransform shape (k, x, y). */

@@ -268,6 +268,55 @@ const LUNGE_RECOVER_SPEED_MUL = 0.25;
 /** Damage multiplier on lunge contact — connecting hurts much more than a graze. */
 const LUNGE_DAMAGE_MUL = 2;
 
+/** Wander steering — small persistent thrust along each cell's
+ *  drifting heading so idle motion has intent instead of pure jitter. */
+const WANDER_FORCE = 0.06;
+const WANDER_HEADING_DRIFT = 0.045;
+
+/** Curiosity — at mid distance to the bell (just outside the fear
+ *  ring), some cells drift TOWARD the player to investigate. Fear
+ *  still wins at close range. Per-type weights below. */
+const CURIOSITY_INNER = 180;  // start of curiosity zone (just outside fear)
+const CURIOSITY_OUTER = 320;  // beyond this, cells ignore the player
+const CURIOSITY_BY_TYPE: Record<NodeTypeId, number> = {
+  core: 0,
+  propulsion: 0.30,
+  sensor: 0.65,        // sensors investigate — they're literal eyes
+  membrane: 0.05,
+  mouth: 0.10,
+  stinger: 0.18,       // stinger drift in to challenge
+  chloroplast: 0.02,   // photosynthesizers don't care
+  mitochondrion: 0.20,
+  spore: 0.08,
+};
+
+/** Per-cell tempo — slow sin pulse on speed scale so cells breathe
+ *  in/out at their own personal cadence. */
+const TEMPO_AMPLITUDE = 0.35;
+const TEMPO_RATE = 0.035;
+
+/** Free-cell flocking — boids-style alignment/cohesion/separation.
+ *  Same-species cells school; separation applies across all types so
+ *  different species don't clip through each other. */
+const FLOCK_RADIUS = 64;
+const FLOCK_R2 = FLOCK_RADIUS * FLOCK_RADIUS;
+const SEPARATION_RADIUS = 22;
+const SEP_R2 = SEPARATION_RADIUS * SEPARATION_RADIUS;
+/** Cohesion is scaled down because the displacement is in pixels —
+ *  this keeps it from yanking cells together too hard. */
+const COHESION_SCALE = 0.018;
+const FLOCK_WEIGHTS: Record<NodeTypeId, { sep: number; ali: number; coh: number }> = {
+  core:           { sep: 0,    ali: 0,    coh: 0    },
+  propulsion:     { sep: 0.85, ali: 0.22, coh: 0.16 }, // strong fish school
+  sensor:         { sep: 0.70, ali: 0.10, coh: 0.06 },
+  membrane:       { sep: 0.55, ali: 0.04, coh: 0.02 }, // solitary
+  mouth:          { sep: 0.55, ali: 0.06, coh: 0.04 }, // semi-solitary
+  stinger:        { sep: 0.65, ali: 0.05, coh: 0.02 }, // territorial
+  chloroplast:    { sep: 0.50, ali: 0.20, coh: 0.05 }, // drifting algal mats
+  mitochondrion:  { sep: 0.65, ali: 0.12, coh: 0.07 },
+  spore:          { sep: 0.45, ali: 0.08, coh: 0.22 }, // tight clusters
+};
+
 /** Free-cell ecology tuning. */
 const ECOLOGY_INTERVAL_MS = 4000;
 const ECOLOGY_NEIGHBOR_RANGE = 250;
@@ -1531,6 +1580,11 @@ export class World {
     const PULL_SPEED = 6;
     const FEAR_R2_BELL = FEAR_RANGE_BELL * FEAR_RANGE_BELL;
     const FEAR_R2_PRED = FEAR_RANGE_PRED * FEAR_RANGE_PRED;
+    // Build a single quadtree this tick for boids neighbor lookups.
+    // Re-used across every body — O(N log N) total instead of O(N²).
+    const flockQt = this.freeBodies.length > 1
+      ? buildQuadtree(this.freeBodies)
+      : null;
     for (const b of this.freeBodies) {
       if (b.magnetized) {
         const dx = cx - (b.x ?? 0);
@@ -1546,8 +1600,73 @@ export class World {
       }
       let vx = b.vx ?? 0;
       let vy = b.vy ?? 0;
-      vx += (this.rng.next() - 0.5) * JITTER;
-      vy += (this.rng.next() - 0.5) * JITTER;
+
+      // ── Wander steering ──────────────────────────────────────────
+      // Each cell carries a slow-drifting heading. Apply a small
+      // persistent thrust along it. Gives idle motion intent — cells
+      // pick a direction and commit briefly instead of pure jitter.
+      if (b.wanderAngle == null) b.wanderAngle = this.rng.range(-Math.PI, Math.PI);
+      b.wanderAngle += this.rng.range(-WANDER_HEADING_DRIFT, WANDER_HEADING_DRIFT);
+      vx += Math.cos(b.wanderAngle) * WANDER_FORCE;
+      vy += Math.sin(b.wanderAngle) * WANDER_FORCE;
+
+      // Reduced jitter — wander handles most of the directional noise.
+      vx += (this.rng.next() - 0.5) * JITTER * 0.4;
+      vy += (this.rng.next() - 0.5) * JITTER * 0.4;
+
+      // ── Boids flocking ─────────────────────────────────────────────
+      // Separation against all neighbors (any type), alignment +
+      // cohesion only against same-type schoolmates. Per-type weights
+      // give each species a different feel — propulsion fish school
+      // tightly, spores clump, membranes are solitary.
+      if (flockQt) {
+        const w = FLOCK_WEIGHTS[b.type];
+        const bx = b.x ?? 0;
+        const by = b.y ?? 0;
+        let sepX = 0;
+        let sepY = 0;
+        let sumVx = 0;
+        let sumVy = 0;
+        let sumX = 0;
+        let sumY = 0;
+        let count = 0;
+        rangeQuery(flockQt, bx, by, FLOCK_RADIUS, (other) => {
+          if (other === b) return;
+          if (other.kind !== "free") return;
+          const dx = (other.x ?? 0) - bx;
+          const dy = (other.y ?? 0) - by;
+          const d2 = dx * dx + dy * dy;
+          if (d2 > FLOCK_R2 || d2 < 0.25) return;
+          // Separation — push away when too close (any type)
+          if (d2 < SEP_R2) {
+            const d = Math.sqrt(d2);
+            const f = 1 - d / SEPARATION_RADIUS;
+            sepX -= (dx / d) * f;
+            sepY -= (dy / d) * f;
+          }
+          // Alignment + cohesion — same species only
+          if (other.type === b.type) {
+            sumVx += other.vx ?? 0;
+            sumVy += other.vy ?? 0;
+            sumX += other.x ?? 0;
+            sumY += other.y ?? 0;
+            count++;
+          }
+        });
+        vx += sepX * w.sep;
+        vy += sepY * w.sep;
+        if (count > 0) {
+          // Alignment — steer toward neighbors' avg velocity
+          vx += (sumVx / count - vx) * w.ali;
+          vy += (sumVy / count - vy) * w.ali;
+          // Cohesion — drift toward neighbors' centroid
+          const dxc = sumX / count - bx;
+          const dyc = sumY / count - by;
+          vx += dxc * w.coh * COHESION_SCALE;
+          vy += dyc * w.coh * COHESION_SCALE;
+        }
+      }
+
       // Fear response — accelerate AWAY from the bell + nearby
       // predators if within range, scaled by per-type skittishness.
       const fearMul = FEAR_BY_TYPE[b.type] ?? 1;
@@ -1577,6 +1696,39 @@ export class World {
           }
         }
       }
+
+      // ── Curiosity ────────────────────────────────────────────────
+      // At medium distance to the bell — outside the fear zone but
+      // close enough to notice — some species drift TOWARD it. Sensors
+      // investigate, propulsion cells circle, others largely ignore.
+      const curMul = CURIOSITY_BY_TYPE[b.type] ?? 0;
+      if (curMul > 0) {
+        const bx = b.x ?? 0;
+        const by = b.y ?? 0;
+        const dxc = cx - bx;
+        const dyc = cy - by;
+        const d = Math.hypot(dxc, dyc);
+        if (d > CURIOSITY_INNER && d < CURIOSITY_OUTER) {
+          // Triangular curve: peaks midway through the curiosity band.
+          const mid = (CURIOSITY_INNER + CURIOSITY_OUTER) / 2;
+          const peak = (CURIOSITY_OUTER - CURIOSITY_INNER) / 2;
+          const t = 1 - Math.abs(d - mid) / peak;
+          if (t > 0) {
+            vx += (dxc / d) * 0.07 * t * curMul;
+            vy += (dyc / d) * 0.07 * t * curMul;
+          }
+        }
+      }
+
+      // ── Tempo pulse ──────────────────────────────────────────────
+      // Each cell breathes — speed scales by a slow personal sin wave.
+      // Different cells are out of phase so the population doesn't
+      // pulse in unison.
+      if (b.tempoPhase == null) b.tempoPhase = this.rng.range(0, Math.PI * 2);
+      const tempo = 1 + Math.sin(this.tickN * TEMPO_RATE + b.tempoPhase) * TEMPO_AMPLITUDE;
+      vx *= tempo;
+      vy *= tempo;
+
       const sp = Math.hypot(vx, vy);
       // Cells can briefly exceed MAX_FREE_SPEED when fleeing —
       // gives a real "panic flutter" feel.
