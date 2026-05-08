@@ -408,6 +408,13 @@ function drawCoreTrail(ctx: CanvasRenderingContext2D, world: World): void {
   }
 }
 
+/**
+ * Cached rotation angle so the bell turns smoothly instead of snapping
+ * each time the velocity vector flips direction. Module-level since
+ * there's only ever one core.
+ */
+let cachedBellAngle = 0;
+
 function drawCore(ctx: CanvasRenderingContext2D, world: World, core: Body): void {
   const x = core.x ?? 0;
   const y = core.y ?? 0;
@@ -415,20 +422,38 @@ function drawCore(ctx: CanvasRenderingContext2D, world: World, core: Body): void
   const breath = 1 + Math.sin(t * 0.04) * 0.06;
   const rr = core.radius * 1.55 * breath;
 
+  // Bell rotation — point tentacles opposite the velocity. Smoothly
+  // lerp toward the target angle (15%/frame ≈ 150ms time-constant)
+  // so quick course corrections don't snap the bell.
+  const vx = core.vx ?? 0;
+  const vy = core.vy ?? 0;
+  const sp = Math.hypot(vx, vy);
+  if (sp > 0.4) {
+    const target = Math.atan2(vx, -vy);
+    let delta = target - cachedBellAngle;
+    while (delta > Math.PI) delta -= 2 * Math.PI;
+    while (delta < -Math.PI) delta += 2 * Math.PI;
+    cachedBellAngle += delta * 0.15;
+  }
+
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(cachedBellAngle);
+
   // Outer halo — kept tight so it doesn't bloom across the screen
-  const halo = ctx.createRadialGradient(x, y, rr * 0.6, x, y, rr * 2.4);
+  const halo = ctx.createRadialGradient(0, 0, rr * 0.6, 0, 0, rr * 2.4);
   halo.addColorStop(0, "rgba(64, 220, 255, 0.28)");
   halo.addColorStop(1, "rgba(64, 220, 255, 0)");
   ctx.fillStyle = halo;
   ctx.beginPath();
-  ctx.arc(x, y, rr * 2.4, 0, Math.PI * 2);
+  ctx.arc(0, 0, rr * 2.4, 0, Math.PI * 2);
   ctx.fill();
 
-  // 5 tentacles (drawn before bell so the bell occludes their roots)
+  // 5 tentacles trailing in local +y → screen-direction = -velocity
   ctx.lineCap = "round";
   for (let strand = -2; strand <= 2; strand++) {
-    const startX = x + strand * (rr * 0.32);
-    const startY = y + rr * 0.4;
+    const startX = strand * (rr * 0.32);
+    const startY = rr * 0.4;
     const length = rr * 4.0;
     const segments = 22;
     ctx.beginPath();
@@ -448,33 +473,59 @@ function drawCore(ctx: CanvasRenderingContext2D, world: World, core: Body): void
   }
 
   // Bell (translucent dome)
-  const bell = ctx.createRadialGradient(x, y - rr * 0.35, rr * 0.1, x, y, rr);
+  const bell = ctx.createRadialGradient(0, -rr * 0.35, rr * 0.1, 0, 0, rr);
   bell.addColorStop(0, "rgba(220, 252, 255, 0.92)");
   bell.addColorStop(0.55, "rgba(64, 220, 255, 0.62)");
   bell.addColorStop(1, "rgba(8, 145, 178, 0.22)");
   ctx.fillStyle = bell;
   ctx.beginPath();
-  ctx.arc(x, y, rr, 0, Math.PI * 2);
+  ctx.arc(0, 0, rr, 0, Math.PI * 2);
   ctx.fill();
 
-  // Rim
   ctx.strokeStyle = "rgba(220, 252, 255, 0.45)";
   ctx.lineWidth = 1.1;
   ctx.stroke();
 
-  // Internal organs (3 small dots inside the bell)
+  // Internal organs
   ctx.fillStyle = "rgba(34, 211, 238, 0.55)";
   for (let i = -1; i <= 1; i++) {
     ctx.beginPath();
-    ctx.arc(x + i * rr * 0.28, y - rr * 0.05, rr * 0.09, 0, Math.PI * 2);
+    ctx.arc(i * rr * 0.28, -rr * 0.05, rr * 0.09, 0, Math.PI * 2);
     ctx.fill();
   }
 
   // Top highlight
   ctx.fillStyle = "rgba(255, 255, 255, 0.28)";
   ctx.beginPath();
-  ctx.ellipse(x - rr * 0.25, y - rr * 0.5, rr * 0.4, rr * 0.13, -0.2, 0, Math.PI * 2);
+  ctx.ellipse(-rr * 0.25, -rr * 0.5, rr * 0.4, rr * 0.13, -0.2, 0, Math.PI * 2);
   ctx.fill();
+
+  ctx.restore();
+}
+
+/**
+ * Dashed cyan tracer line from the core to each magnetized free cell.
+ * Reads as "I am pulling that one in." Drawn between bonds and
+ * bodies so it underlays the entity itself.
+ */
+export function drawLockOnTracers(ctx: CanvasRenderingContext2D, world: World): void {
+  const core = world.entityBodies[0];
+  if (!core) return;
+  let any = false;
+  for (const b of world.freeBodies) {
+    if (!b.magnetized) continue;
+    if (!any) {
+      ctx.strokeStyle = "rgba(96, 240, 255, 0.55)";
+      ctx.lineWidth = 1.4;
+      ctx.setLineDash([6, 5]);
+      any = true;
+    }
+    ctx.beginPath();
+    ctx.moveTo(core.x ?? 0, core.y ?? 0);
+    ctx.lineTo(b.x ?? 0, b.y ?? 0);
+    ctx.stroke();
+  }
+  if (any) ctx.setLineDash([]);
 }
 
 export function drawBodies(
@@ -584,6 +635,45 @@ export function drawSparkles(ctx: CanvasRenderingContext2D, world: World): void 
     ctx.arc(s.x, s.y, radius, 0, Math.PI * 2);
     ctx.stroke();
   }
+}
+
+/* ─── Thumbstick overlay (screen space) ──────────────────────────── */
+
+/**
+ * Floating thumbstick: anchor ring + knob. Drawn after applyCamera
+ * restores the identity transform so coordinates are in CSS pixels.
+ */
+export function drawThumbstick(ctx: CanvasRenderingContext2D, world: World): void {
+  if (!world.stickAnchor || !world.stickKnob) return;
+  const a = world.stickAnchor;
+  const k = world.stickKnob;
+  // Anchor outer ring
+  ctx.strokeStyle = "rgba(64, 220, 255, 0.45)";
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.arc(a.x, a.y, 50, 0, Math.PI * 2);
+  ctx.stroke();
+  // Faint inner fill so it reads against any background
+  ctx.fillStyle = "rgba(8, 30, 50, 0.35)";
+  ctx.fill();
+  // Knob halo
+  const knobHalo = ctx.createRadialGradient(k.x, k.y, 0, k.x, k.y, 30);
+  knobHalo.addColorStop(0, "rgba(96, 240, 255, 0.55)");
+  knobHalo.addColorStop(1, "rgba(64, 220, 255, 0)");
+  ctx.fillStyle = knobHalo;
+  ctx.beginPath();
+  ctx.arc(k.x, k.y, 30, 0, Math.PI * 2);
+  ctx.fill();
+  // Knob body
+  ctx.fillStyle = "rgba(64, 220, 255, 0.85)";
+  ctx.beginPath();
+  ctx.arc(k.x, k.y, 18, 0, Math.PI * 2);
+  ctx.fill();
+  // Knob highlight
+  ctx.fillStyle = "rgba(220, 252, 255, 0.55)";
+  ctx.beginPath();
+  ctx.arc(k.x - 5, k.y - 5, 6, 0, Math.PI * 2);
+  ctx.fill();
 }
 
 /* ─── Telegraphs (incoming-predator warning) ──────────────────────── */

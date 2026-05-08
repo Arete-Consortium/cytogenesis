@@ -57,6 +57,16 @@ const FREE_POOL: NodeTypeId[] = [
   "spore",
 ];
 
+/** Events the world emits each tick — drained by the React layer. */
+export type WorldEvent =
+  | "capture"
+  | "hit"
+  | "transcend"
+  | "death"
+  | "lockOn"
+  | "telegraph"
+  | `trait:${string}`;
+
 export interface WorldConfig {
   /** Number of free cells to scatter at start. Default 200. */
   freeCount?: number;
@@ -107,10 +117,17 @@ export class World {
   sparkles: { x: number; y: number; age: number; max: number; hue: string }[];
   /** Pending predator spawns — drawn as edge arrows during the warning window. */
   telegraphs: { x: number; y: number; untilMs: number }[];
-  /** Player input: where the dragged body should swim toward. */
-  steerTarget: { x: number; y: number; bodyId: string } | null;
+  /** Thumbstick UI state (screen-space pixel coords). */
+  stickAnchor: { x: number; y: number } | null;
+  stickKnob: { x: number; y: number } | null;
+  /** Normalized stick output: unit direction + magnitude in [0, 1]. */
+  stickInput: { ux: number; uy: number; t: number } | null;
   /** Visual camera shake — random offset applied during applyCamera, decays per tick. */
   shakeIntensity: number;
+  /** Per-tick events drained by the React layer (audio, toasts). */
+  events: WorldEvent[];
+  /** Trait IDs that were active on the previous capture, for first-acquisition toasts. */
+  private prevTraitSet: Set<string>;
   /** Accumulator for sub-frame d3 sim ticks during slow-mo. */
   private simAccum: number;
   private nextPredatorSpawnAt: number;
@@ -147,8 +164,12 @@ export class World {
     this.coreTrail = [];
     this.sparkles = [];
     this.telegraphs = [];
-    this.steerTarget = null;
+    this.stickAnchor = null;
+    this.stickKnob = null;
+    this.stickInput = null;
     this.shakeIntensity = 0;
+    this.events = [];
+    this.prevTraitSet = new Set();
     this.simAccum = 0;
     this.nextPredatorSpawnAt = PREDATOR_FIRST_SPAWN_MS;
 
@@ -276,33 +297,28 @@ export class World {
     this.tickN += 1;
   }
 
-  /** Soft-steer: accelerate the dragged body toward steerTarget. */
+  /**
+   * Read thumbstick input and accelerate the core in that direction.
+   * stickInput.t is the stick deflection [0, 1]; acceleration scales
+   * linearly with t. Combined with velocityDecay 0.18 the bell glides
+   * with weight instead of stop-on-release.
+   */
   private applySteerForce(): void {
-    if (!this.steerTarget) return;
-    const body = this.entityBodies.find((b) => b.id === this.steerTarget!.bodyId);
-    if (!body) {
-      this.steerTarget = null;
-      return;
-    }
-    // Clear any leftover hard-pin from prior code paths.
-    body.fx = null;
-    body.fy = null;
-    const dx = this.steerTarget.x - (body.x ?? 0);
-    const dy = this.steerTarget.y - (body.y ?? 0);
-    const dist = Math.hypot(dx, dy);
-    if (dist < 0.5) return;
-    // Acceleration scales with distance up to a cap. Combined with
-    // velocityDecay 0.18, equilibrium speed ≈ MAX_ACCEL / 0.18.
-    const MAX_ACCEL = 0.9;
-    const accel = Math.min(dist * 0.06, MAX_ACCEL);
-    body.vx = (body.vx ?? 0) + (dx / dist) * accel;
-    body.vy = (body.vy ?? 0) + (dy / dist) * accel;
-    // Hard cap on velocity so a long drag distance doesn't blow up.
+    if (!this.stickInput) return;
+    const core = this.entityBodies[0];
+    if (!core) return;
+    const { ux, uy, t } = this.stickInput;
+    if (t < 0.05) return;
+    core.fx = null;
+    core.fy = null;
+    const accel = t * 0.9;
+    core.vx = (core.vx ?? 0) + ux * accel;
+    core.vy = (core.vy ?? 0) + uy * accel;
     const MAX_VEL = 6;
-    const sp = Math.hypot(body.vx ?? 0, body.vy ?? 0);
+    const sp = Math.hypot(core.vx ?? 0, core.vy ?? 0);
     if (sp > MAX_VEL) {
-      body.vx = (body.vx ?? 0) * (MAX_VEL / sp);
-      body.vy = (body.vy ?? 0) * (MAX_VEL / sp);
+      core.vx = (core.vx ?? 0) * (MAX_VEL / sp);
+      core.vy = (core.vy ?? 0) * (MAX_VEL / sp);
     }
   }
 
@@ -363,19 +379,33 @@ export class World {
     this.sparkles.push({ x, y, age: 0, max: 22, hue });
   }
 
-  /** Time-gated periodic predator spawn, capped at MAX_PREDATORS. */
+  /**
+   * Difficulty curve: as the entity grows, predators spawn faster and
+   * the cap rises. Both saturate around captured=30 so a transcend run
+   * doesn't get unwinnable.
+   */
+  private currentSpawnIntervalMs(): number {
+    const captured = this.entityBodies.length;
+    const factor = Math.min(1, captured / 30);
+    return Math.round(PREDATOR_SPAWN_INTERVAL_MS - factor * 3500);
+  }
+  private currentMaxPredators(): number {
+    const captured = this.entityBodies.length;
+    return Math.min(8, 2 + Math.floor(captured / 8));
+  }
+
+  /** Time-gated periodic predator spawn, capped by current difficulty. */
   private maybeSpawnPredator(): void {
-    if (this.predators.length + this.telegraphs.length >= MAX_PREDATORS) return;
+    if (this.predators.length + this.telegraphs.length >= this.currentMaxPredators()) return;
     if (this.wallMs < this.nextPredatorSpawnAt) return;
     const pos = this.pickPredatorSpawnPosition();
-    // Push a telegraph; the predator materializes 1.5s later so the
-    // player gets a clear "incoming!" beat.
     this.telegraphs.push({
       x: pos.x,
       y: pos.y,
       untilMs: this.wallMs + PREDATOR_TELEGRAPH_MS,
     });
-    this.nextPredatorSpawnAt = this.wallMs + PREDATOR_SPAWN_INTERVAL_MS;
+    this.events.push("telegraph");
+    this.nextPredatorSpawnAt = this.wallMs + this.currentSpawnIntervalMs();
   }
 
   /** Materialize predators whose telegraph window has elapsed. */
@@ -495,13 +525,15 @@ export class World {
           this.runStatus = "dead";
           this.runEndedAtMs = this.wallMs;
           this.addShake(20);
+          this.events.push("death");
           return;
         }
-        // Glancing blow on core while shielded by other captured nodes — recoil only.
         this.addShake(5);
+        this.events.push("hit");
       } else {
         this.pruneFromGraph(hit);
         this.addShake(8);
+        this.events.push("hit");
       }
 
       this.emitSparkle(hit.x ?? 0, hit.y ?? 0, "rgba(248, 113, 113,");
@@ -688,6 +720,7 @@ export class World {
     if (Math.hypot(dx, dy) > this.traits.lockOnRange) return false;
     target.magnetized = true;
     this.lockOnReadyAt = nowMs + this.traits.lockOnCooldownMs;
+    this.events.push("lockOn");
     return true;
   }
 
@@ -738,14 +771,23 @@ export class World {
     this.linkForce.links(this.bonds);
     // Graph-mutation hook: refresh derived gameplay state once.
     this.traits = recomputeTraits(this.entityBodies, this.bonds);
+    // First-time emergence toasts — emit per newly-active trait.
+    for (const id of this.traits.active) {
+      if (!this.prevTraitSet.has(id)) {
+        this.events.push(`trait:${id}` as WorldEvent);
+      }
+    }
+    this.prevTraitSet = new Set(this.traits.active);
     // Captured cell rejoins the swarm-free pool only on death; clear
     // any in-flight lock-on bias.
     free.magnetized = false;
     this.peakCaptured = Math.max(this.peakCaptured, this.entityBodies.length);
+    this.events.push("capture");
     if (this.entityBodies.length >= TRANSCEND_AT && this.runStatus === "running") {
       this.runStatus = "transcended";
       this.runEndedAtMs = this.wallMs;
       this.addShake(15);
+      this.events.push("transcend");
     }
     this.emitSparkle(free.x ?? 0, free.y ?? 0, "rgba(160, 240, 255,");
     this.reheat(0.4);

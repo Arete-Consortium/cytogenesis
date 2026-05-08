@@ -38,3 +38,17 @@ body {
   padding-bottom: env(safe-area-inset-bottom);
   padding-left: env(safe-area-inset-left);
 }
+
+@keyframes fadein {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.animate-fadein { animation: fadein 0.45s ease-out both; }
+
+@keyframes trait-toast {
+  0%   { opacity: 0; transform: translateY(8px) scale(0.96); }
+  15%  { opacity: 1; transform: translateY(0) scale(1); }
+  85%  { opacity: 1; transform: translateY(0) scale(1); }
+  100% { opacity: 0; transform: translateY(-6px) scale(0.96); }
+}
+.animate-trait-toast { animation: trait-toast 1.7s ease-in-out both; }

@@ -8,14 +8,17 @@ import {
   drawBodies,
   drawBonds,
   drawEnvCA,
+  drawLockOnTracers,
   drawPredators,
   drawSparkles,
   drawAmbientPlankton,
   drawTelegraphs,
+  drawThumbstick,
   applyCamera,
 } from "@/game/render";
 import type { TraitState } from "@/game/traits";
 import { emptyTraitState } from "@/game/traits";
+import { audio } from "@/lib/audio";
 
 interface FrameStats {
   fps: number;
@@ -48,9 +51,18 @@ const TRAIT_LABEL: Record<string, string> = {
   lock_on: "Lock-On",
 };
 
+interface Toast {
+  id: number;
+  text: string;
+  expiresAt: number;
+}
+
+let nextToastId = 1;
+
 export default function GameCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [runId, setRunId] = useState(0);
+  const [toasts, setToasts] = useState<Toast[]>([]);
   const [stats, setStats] = useState<FrameStats>({
     fps: 0,
     ms: 0,
@@ -68,7 +80,22 @@ export default function GameCanvas() {
     overlayReady: false,
   });
 
+  // Helper accessible inside the rAF loop to push a trait-unlock toast.
+  const queueToast = (id: string) => {
+    const text = TRAIT_LABEL[id]?.toUpperCase() ?? id.toUpperCase();
+    const toast: Toast = {
+      id: nextToastId++,
+      text,
+      expiresAt: performance.now() + 1700,
+    };
+    setToasts((prev) => [...prev, toast]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== toast.id));
+    }, 1700);
+  };
+
   useEffect(() => {
+    setToasts([]);
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
@@ -139,93 +166,117 @@ export default function GameCanvas() {
       d3.zoomIdentity.translate(world.camera.x, world.camera.y).scale(world.camera.k),
     );
 
-    // ── d3.drag ──────────────────────────────────────────────────────
-    // Subject returns null for free cells — only entity-graph nodes
-    // are draggable. Free cells respond to clicks (lock-on) instead.
-    //
-    // Soft-drag steering: drag updates world.steerTarget; tick applies
-    // a force toward it, capped by MAX_VEL inside applySteerForce.
-    // Body has weight + glide because we lowered velocityDecay to 0.18.
-    const drag = d3
-      .drag<HTMLCanvasElement, unknown>()
-      .container(canvas)
-      .subject((event) => {
-        const w = world.screenToWorld(event.x, event.y);
-        const hit = world.hitTest(w.x, w.y);
-        if (!hit || hit.kind !== "captured") return null;
-        return hit;
-      })
-      .on("start", (event) => {
-        if (!event.subject) return;
-        draggingId = event.subject.id;
-        const w = world.screenToWorld(event.x, event.y);
-        world.steerTarget = { x: w.x, y: w.y, bodyId: event.subject.id };
-        world.reheat(0.5);
-      })
-      .on("drag", (event) => {
-        if (!event.subject) return;
-        const w = world.screenToWorld(event.x, event.y);
-        world.steerTarget = { x: w.x, y: w.y, bodyId: event.subject.id };
-      })
-      .on("end", () => {
-        draggingId = null;
-        world.steerTarget = null;
-      });
-    selection.call(drag);
-
-    // ── tap → lock-on ────────────────────────────────────────────────
-    // Pointer events so this works for mouse + touch + pen uniformly.
-    // Filter to primary so a pinch-zoom's second finger can't fire a
-    // spurious tap. 6px threshold separates a tap from a drag/pan.
+    // ── thumbstick + tap (single input model) ────────────────────────
+    // pointerdown anywhere anchors a virtual stick at the touch point.
+    // Drag the knob → bell swims in that direction with magnitude
+    // proportional to deflection. Released-without-movement (≤6px) is
+    // a tap; taps on a free cell fire lock-on (when trait active).
+    // Pinch zoom still works via d3.zoom on touch events; multi-touch
+    // here cancels the stick.
+    const STICK_RADIUS = 50;
+    const TAP_THRESHOLD = 6;
+    const activePointers = new Set<number>();
     let pointerDownAt: { x: number; y: number; pointerId: number } | null = null;
+
+    const clearStick = () => {
+      world.stickAnchor = null;
+      world.stickKnob = null;
+      world.stickInput = null;
+    };
+
     const onPointerDown = (e: PointerEvent) => {
+      // First user gesture also unlocks the audio context.
+      audio.init();
+      activePointers.add(e.pointerId);
+      if (activePointers.size > 1) {
+        clearStick();
+        pointerDownAt = null;
+        return;
+      }
       if (!e.isPrimary) return;
-      pointerDownAt = { x: e.clientX, y: e.clientY, pointerId: e.pointerId };
+      const rect = canvas.getBoundingClientRect();
+      const sx = e.clientX - rect.left;
+      const sy = e.clientY - rect.top;
+      pointerDownAt = { x: sx, y: sy, pointerId: e.pointerId };
+      world.stickAnchor = { x: sx, y: sy };
+      world.stickKnob = { x: sx, y: sy };
+      world.stickInput = null;
+      world.reheat(0.4);
+    };
+    const onPointerMoveStick = (e: PointerEvent) => {
+      if (!pointerDownAt || pointerDownAt.pointerId !== e.pointerId) return;
+      if (activePointers.size > 1) return;
+      const rect = canvas.getBoundingClientRect();
+      const sx = e.clientX - rect.left;
+      const sy = e.clientY - rect.top;
+      const dx = sx - pointerDownAt.x;
+      const dy = sy - pointerDownAt.y;
+      const len = Math.hypot(dx, dy);
+      let kx = sx;
+      let ky = sy;
+      if (len > STICK_RADIUS) {
+        kx = pointerDownAt.x + (dx / len) * STICK_RADIUS;
+        ky = pointerDownAt.y + (dy / len) * STICK_RADIUS;
+      }
+      world.stickKnob = { x: kx, y: ky };
+      if (len > 0.5) {
+        const t = Math.min(1, len / STICK_RADIUS);
+        world.stickInput = { ux: dx / len, uy: dy / len, t };
+      } else {
+        world.stickInput = null;
+      }
     };
     const onPointerUp = (e: PointerEvent) => {
-      if (!pointerDownAt || pointerDownAt.pointerId !== e.pointerId) return;
+      activePointers.delete(e.pointerId);
       const start = pointerDownAt;
+      if (!start || start.pointerId !== e.pointerId) {
+        clearStick();
+        return;
+      }
       pointerDownAt = null;
-      const moved = Math.hypot(e.clientX - start.x, e.clientY - start.y);
-      if (moved > 6) return; // drag / pan / pinch
-      if (world.traits.lockOnRange <= 0) return;
       const rect = canvas.getBoundingClientRect();
-      const w = world.screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
+      const sx = e.clientX - rect.left;
+      const sy = e.clientY - rect.top;
+      const moved = Math.hypot(sx - start.x, sy - start.y);
+      clearStick();
+      if (moved > TAP_THRESHOLD) return;
+      if (world.traits.lockOnRange <= 0) return;
+      const w = world.screenToWorld(sx, sy);
       const hit = world.hitTest(w.x, w.y);
       if (!hit || hit.kind !== "free") return;
       world.lockOn(hit, performance.now());
     };
-    const onPointerCancel = () => {
+    const onPointerCancel = (e: PointerEvent) => {
+      activePointers.delete(e.pointerId);
       pointerDownAt = null;
+      clearStick();
     };
     canvas.addEventListener("pointerdown", onPointerDown, true);
+    canvas.addEventListener("pointermove", onPointerMoveStick, true);
     canvas.addEventListener("pointerup", onPointerUp, true);
     canvas.addEventListener("pointercancel", onPointerCancel, true);
 
-    // Block long-press context menu on the canvas — interferes with drags.
     const onContext = (e: Event) => e.preventDefault();
     canvas.addEventListener("contextmenu", onContext);
 
-    // ── hover (cursor feedback — mouse only) ─────────────────────────
-    const onMove = (e: PointerEvent) => {
-      if (e.pointerType === "touch") return; // no hover on touch
+    // ── hover cursor (mouse only) ────────────────────────────────────
+    const onHoverCursor = (e: PointerEvent) => {
+      if (e.pointerType === "touch") return;
       const rect = canvas.getBoundingClientRect();
       const sx = e.clientX - rect.left;
       const sy = e.clientY - rect.top;
       const w = world.screenToWorld(sx, sy);
       const hit = world.hitTest(w.x, w.y);
       hoveredId = hit?.id ?? null;
-      if (!hit) {
-        canvas.style.cursor = "default";
-      } else if (hit.kind === "captured") {
-        canvas.style.cursor = "grab";
-      } else if (world.traits.lockOnRange > 0) {
+      if (hit && hit.kind === "free" && world.traits.lockOnRange > 0) {
         canvas.style.cursor = "crosshair";
+      } else if (pointerDownAt) {
+        canvas.style.cursor = "grabbing";
       } else {
         canvas.style.cursor = "default";
       }
     };
-    canvas.addEventListener("pointermove", onMove);
+    canvas.addEventListener("pointermove", onHoverCursor);
 
     // ── rAF loop ─────────────────────────────────────────────────────
     let raf = 0;
@@ -251,13 +302,32 @@ export default function GameCanvas() {
       applyCamera(ctx, world, dpr);
       drawEnvCA(ctx, world);
       drawBonds(ctx, world);
+      drawLockOnTracers(ctx, world);
       drawBodies(ctx, world, hoveredId, draggingId);
       drawPredators(ctx, world);
       drawSparkles(ctx, world);
       ctx.restore();
-      // Telegraphs render on top in screen space so the edge arrows
-      // never clip behind the entity.
+      // Screen-space overlays: telegraph arrows, thumbstick.
       drawTelegraphs(ctx, world, width, height);
+      drawThumbstick(ctx, world);
+
+      // Drain world events → audio + trait toasts.
+      if (world.events.length > 0) {
+        for (const ev of world.events) {
+          if (ev === "capture") audio.capture();
+          else if (ev === "hit") audio.hit();
+          else if (ev === "lockOn") audio.lockOn();
+          else if (ev === "telegraph") audio.telegraph();
+          else if (ev === "transcend") audio.transcend();
+          else if (ev === "death") audio.death();
+          else if (typeof ev === "string" && ev.startsWith("trait:")) {
+            audio.trait();
+            const id = ev.slice("trait:".length);
+            queueToast(id);
+          }
+        }
+        world.events.length = 0;
+      }
 
       if (t - lastStatPush >= 250) {
         const elapsed = (t - lastStatPush) / 1000;
@@ -298,8 +368,9 @@ export default function GameCanvas() {
       cancelAnimationFrame(raf);
       window.removeEventListener("resize", resize);
       window.removeEventListener("orientationchange", resize);
-      canvas.removeEventListener("pointermove", onMove);
+      canvas.removeEventListener("pointermove", onHoverCursor);
       canvas.removeEventListener("pointerdown", onPointerDown, true);
+      canvas.removeEventListener("pointermove", onPointerMoveStick, true);
       canvas.removeEventListener("pointerup", onPointerUp, true);
       canvas.removeEventListener("pointercancel", onPointerCancel, true);
       canvas.removeEventListener("contextmenu", onContext);
@@ -377,29 +448,71 @@ export default function GameCanvas() {
           className="pointer-events-none absolute bottom-2 left-1/2 max-w-[92vw] -translate-x-1/2 rounded-full bg-black/55 px-3 py-1.5 text-center font-mono text-[10px] text-zinc-200/85 backdrop-blur-sm transition-opacity"
           style={{ bottom: "max(1rem, env(safe-area-inset-bottom))" }}
         >
-          <span className="hidden sm:inline">drag the bell to swim · scroll or pinch to zoom</span>
-          <span className="sm:hidden">drag the bell to swim · pinch to zoom</span>
+          <span className="hidden sm:inline">touch + drag to swim · click prey to pull · scroll to zoom</span>
+          <span className="sm:hidden">touch + drag to swim · pinch to zoom</span>
         </div>
       )}
 
       {stats.overlayReady && (
-        <div className="absolute inset-0 z-40 flex flex-col items-center justify-center gap-4 bg-black/70 px-6 backdrop-blur-sm">
+        <div className="absolute inset-0 z-40 flex animate-fadein flex-col items-center justify-center gap-6 bg-black/70 px-6 backdrop-blur-sm">
           <div
-            className={`font-mono text-3xl font-semibold tracking-tight sm:text-4xl ${
+            className={`font-mono text-3xl font-semibold tracking-[0.3em] sm:text-4xl ${
               stats.runStatus === "transcended" ? "text-cyan-300" : "text-red-400"
             }`}
           >
             {stats.runStatus === "transcended" ? "TRANSCENDED" : "CONSUMED"}
           </div>
-          <div className="font-mono text-sm text-zinc-300">
-            peak {stats.peakCaptured} · {formatDuration(stats.runDurationMs)}
+          <div className="grid grid-cols-3 gap-6 font-mono text-center">
+            <div>
+              <div className="text-2xl text-zinc-100">{stats.peakCaptured}</div>
+              <div className="text-[10px] uppercase tracking-wider text-zinc-500">peak</div>
+            </div>
+            <div>
+              <div className="text-2xl text-zinc-100">{formatDuration(stats.runDurationMs)}</div>
+              <div className="text-[10px] uppercase tracking-wider text-zinc-500">time</div>
+            </div>
+            <div>
+              <div className="text-2xl text-zinc-100">{stats.bonds}</div>
+              <div className="text-[10px] uppercase tracking-wider text-zinc-500">bonds</div>
+            </div>
           </div>
+          {traitList.length > 0 && (
+            <div className="flex max-w-xs flex-wrap justify-center gap-1.5">
+              {traitList.map((id) => (
+                <span
+                  key={id}
+                  className="rounded-full bg-cyan-300/10 px-2.5 py-1 font-mono text-[11px] text-cyan-200/90 ring-1 ring-cyan-300/25"
+                >
+                  {TRAIT_LABEL[id] ?? id}
+                  <span className="ml-1 text-cyan-200/55">
+                    ×{stats.traits.levels[id as keyof typeof stats.traits.levels]}
+                  </span>
+                </span>
+              ))}
+            </div>
+          )}
           <button
             onClick={restart}
-            className="mt-2 inline-flex h-12 min-w-[180px] items-center justify-center rounded-full border border-zinc-600 px-6 font-mono text-sm text-zinc-100 transition-colors hover:bg-zinc-800 active:bg-zinc-900"
+            className="mt-2 inline-flex h-12 min-w-[200px] items-center justify-center rounded-full border border-zinc-600 px-6 font-mono text-sm text-zinc-100 transition-colors hover:bg-zinc-800 active:bg-zinc-900"
           >
             Begin again →
           </button>
+        </div>
+      )}
+
+      {/* Trait-unlock toasts — fade in/out, centered. */}
+      {toasts.length > 0 && (
+        <div
+          className="pointer-events-none absolute left-1/2 top-1/3 -translate-x-1/2 flex flex-col items-center gap-2"
+        >
+          {toasts.map((t) => (
+            <div
+              key={t.id}
+              className="animate-trait-toast rounded-full bg-black/55 px-5 py-2 font-mono text-xs uppercase tracking-[0.25em] text-cyan-200 backdrop-blur-sm ring-1 ring-cyan-300/25"
+            >
+              {t.text}
+            </div>
+          ))}
         </div>
       )}
     </div>
