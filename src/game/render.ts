@@ -32,6 +32,11 @@ export function drawBackground(
   ctx.fillStyle = depth;
   ctx.fillRect(0, 0, width, height);
 
+  // Always-on faint haze so the bg never reads as a void where the
+  // env-CA underlay happens to be dim. Theme-tinted via T.ca.
+  ctx.fillStyle = `rgba(${T.ca.r}, ${T.ca.g}, ${T.ca.b}, 0.07)`;
+  ctx.fillRect(0, 0, width, height);
+
   // Two soft shafts of light, drifting slowly.
   const shaftCount = 2;
   for (let i = 0; i < shaftCount; i++) {
@@ -121,13 +126,13 @@ export function drawEnvCA(ctx: CanvasRenderingContext2D, world: World): void {
         data[k + 2] = T.ca.b;
         data[k + 3] = T.ca.a;
       } else {
-        // Faint baseline tint even for dead cells so the underlay
-        // doesn't leave hard rectangular dark "voids" against the bg
-        // gradient when a region of the CA is mostly dead.
+        // Visible baseline tint for dead cells so the underlay never
+        // leaves hard rectangular dark "voids" — the entire arena
+        // always reads as ocean, even where the CA has settled.
         data[k] = T.ca.r;
         data[k + 1] = T.ca.g;
         data[k + 2] = T.ca.b;
-        data[k + 3] = 8;
+        data[k + 3] = 20;
       }
     }
     bctx.putImageData(img, 0, 0);
