@@ -96,6 +96,13 @@ export class World {
   peakCaptured: number;
   /** Real-time accumulator (ms). Drives spawn cadence + run timer. */
   wallMs: number;
+  /** Viewport in CSS pixels. Camera follow keeps the core at viewport center. */
+  viewportWidth: number;
+  viewportHeight: number;
+  /** Recent core positions for tentacle / wake rendering. */
+  coreTrail: { x: number; y: number }[];
+  /** Short-lived expanding rings on capture / hit. */
+  sparkles: { x: number; y: number; age: number; max: number; hue: string }[];
   private nextPredatorSpawnAt: number;
   private linkForce: d3.ForceLink<Body, Bond>;
 
@@ -125,6 +132,10 @@ export class World {
     this.runEndedAtMs = null;
     this.peakCaptured = 1;
     this.wallMs = 0;
+    this.viewportWidth = 0;
+    this.viewportHeight = 0;
+    this.coreTrail = [];
+    this.sparkles = [];
     this.nextPredatorSpawnAt = PREDATOR_FIRST_SPAWN_MS;
 
     this.linkForce = d3
@@ -221,7 +232,55 @@ export class World {
     this.integratePredators();
     this.sim.tick();
     this.resolveHits();
+    this.updateCameraFollow();
+    this.updateCoreTrail();
+    this.updateSparkles();
     this.tickN += 1;
+  }
+
+  /** Tell the world how big the viewport is. Camera follow uses this. */
+  setViewport(width: number, height: number): void {
+    this.viewportWidth = width;
+    this.viewportHeight = height;
+  }
+
+  /**
+   * Lerp camera so the core sits near viewport center. Stays in screen
+   * pixels (not world units) — d3.zoom's transform shape. Skipped if
+   * viewport hasn't been set (tests).
+   */
+  private updateCameraFollow(): void {
+    if (this.viewportWidth === 0 || this.viewportHeight === 0) return;
+    const core = this.entityBodies[0];
+    if (!core) return;
+    const targetX = this.viewportWidth / 2 - (core.x ?? 0) * this.camera.k;
+    const targetY = this.viewportHeight / 2 - (core.y ?? 0) * this.camera.k;
+    // 0.18 ≈ ~150ms time-constant at 60fps. Smooth without rubber-banding.
+    const lerp = 0.18;
+    this.camera.x += (targetX - this.camera.x) * lerp;
+    this.camera.y += (targetY - this.camera.y) * lerp;
+  }
+
+  /** Ring-buffer of recent core positions. Drives the wake/tentacle render. */
+  private updateCoreTrail(): void {
+    const core = this.entityBodies[0];
+    if (!core) return;
+    this.coreTrail.push({ x: core.x ?? 0, y: core.y ?? 0 });
+    if (this.coreTrail.length > 24) this.coreTrail.shift();
+  }
+
+  /** Age sparkles + drop expired ones. */
+  private updateSparkles(): void {
+    if (this.sparkles.length === 0) return;
+    for (let i = this.sparkles.length - 1; i >= 0; i--) {
+      const s = this.sparkles[i];
+      s.age += 1;
+      if (s.age >= s.max) this.sparkles.splice(i, 1);
+    }
+  }
+
+  emitSparkle(x: number, y: number, hue = "rgba(160, 240, 255,"): void {
+    this.sparkles.push({ x, y, age: 0, max: 22, hue });
   }
 
   /** Time-gated periodic predator spawn, capped at MAX_PREDATORS. */
@@ -343,6 +402,7 @@ export class World {
         this.pruneFromGraph(hit);
       }
 
+      this.emitSparkle(hit.x ?? 0, hit.y ?? 0, "rgba(248, 113, 113,");
       p.recoilUntil = this.tickN + PREDATOR_RECOIL_TICKS;
       const dx = (hit.x ?? 0) - px;
       const dy = (hit.y ?? 0) - py;
@@ -584,6 +644,7 @@ export class World {
       this.runStatus = "transcended";
       this.runEndedAtMs = this.wallMs;
     }
+    this.emitSparkle(free.x ?? 0, free.y ?? 0, "rgba(160, 240, 255,");
     this.reheat(0.4);
     return bond;
   }

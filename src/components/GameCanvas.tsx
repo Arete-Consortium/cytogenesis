@@ -9,6 +9,7 @@ import {
   drawBonds,
   drawEnvCA,
   drawPredators,
+  drawSparkles,
   applyCamera,
 } from "@/game/render";
 import type { TraitState } from "@/game/traits";
@@ -86,7 +87,10 @@ export default function GameCanvas() {
       height = canvas.clientHeight;
       canvas.width = Math.floor(width * dpr);
       canvas.height = Math.floor(height * dpr);
+      world.setViewport(width, height);
       if (world.camera.x === 0 && world.camera.y === 0) {
+        // Snap camera to center on first sizing so the lerp doesn't
+        // visibly start from (0,0).
         world.camera.x = width / 2;
         world.camera.y = height / 2;
       }
@@ -119,10 +123,10 @@ export default function GameCanvas() {
         }
         return !event.ctrlKey && !event.button;
       })
+      // Camera follow owns x/y. Zoom only mirrors k so pinch / wheel
+      // adjusts scale while the entity stays centered.
       .on("zoom", (event) => {
         world.camera.k = event.transform.k;
-        world.camera.x = event.transform.x;
-        world.camera.y = event.transform.y;
       });
     selection.call(zoom);
     selection.call(
@@ -133,6 +137,26 @@ export default function GameCanvas() {
     // ── d3.drag ──────────────────────────────────────────────────────
     // Subject returns null for free cells — only entity-graph nodes
     // are draggable. Free cells respond to clicks (lock-on) instead.
+    //
+    // Drag pin is capped to MAX_STEER world units from the body's
+    // current position. With camera-follow, holding finger off-center
+    // produces continuous drift in that direction — flOw / Osmos
+    // thumbstick feel. Without the cap the pin would race the camera
+    // each frame.
+    const MAX_STEER = 60;
+    const applyCappedPin = (body: { x?: number; y?: number; fx?: number | null; fy?: number | null }, tx: number, ty: number) => {
+      const cx = body.x ?? 0;
+      const cy = body.y ?? 0;
+      let dx = tx - cx;
+      let dy = ty - cy;
+      const len = Math.hypot(dx, dy);
+      if (len > MAX_STEER) {
+        dx = (dx / len) * MAX_STEER;
+        dy = (dy / len) * MAX_STEER;
+      }
+      body.fx = cx + dx;
+      body.fy = cy + dy;
+    };
     const drag = d3
       .drag<HTMLCanvasElement, unknown>()
       .container(canvas)
@@ -146,15 +170,13 @@ export default function GameCanvas() {
         if (!event.subject) return;
         draggingId = event.subject.id;
         const w = world.screenToWorld(event.x, event.y);
-        event.subject.fx = w.x;
-        event.subject.fy = w.y;
+        applyCappedPin(event.subject, w.x, w.y);
         world.reheat(0.5);
       })
       .on("drag", (event) => {
         if (!event.subject) return;
         const w = world.screenToWorld(event.x, event.y);
-        event.subject.fx = w.x;
-        event.subject.fy = w.y;
+        applyCappedPin(event.subject, w.x, w.y);
       })
       .on("end", (event) => {
         if (!event.subject) return;
@@ -243,6 +265,7 @@ export default function GameCanvas() {
       drawBonds(ctx, world);
       drawBodies(ctx, world, hoveredId, draggingId);
       drawPredators(ctx, world);
+      drawSparkles(ctx, world);
       ctx.restore();
 
       if (t - lastStatPush >= 250) {
@@ -296,66 +319,72 @@ export default function GameCanvas() {
   return (
     <div className="relative h-full w-full">
       <canvas ref={canvasRef} className="absolute inset-0 h-full w-full touch-none select-none" />
+      {/* Top-left: just timer + peak. Quiet. */}
       <div
-        className="pointer-events-none absolute left-2 top-2 max-w-[60vw] rounded bg-black/45 px-2 py-1 font-mono text-[10px] leading-tight text-zinc-300 backdrop-blur sm:left-3 sm:top-3 sm:text-[11px] sm:leading-4"
+        className="pointer-events-none absolute left-2 top-2 font-mono text-[11px] leading-tight text-zinc-300/90"
         style={{
           top: "max(0.5rem, env(safe-area-inset-top))",
-          left: "max(0.5rem, env(safe-area-inset-left))",
+          left: "max(0.75rem, env(safe-area-inset-left))",
         }}
       >
-        <div className="text-zinc-100">
-          {formatDuration(stats.runDurationMs)} · peak {stats.peakCaptured}
-        </div>
-        <div className="hidden sm:block">fps {stats.fps}</div>
-        <div className="hidden sm:block">frame {stats.ms} ms</div>
-        <div>
-          <span className="text-cyan-300">captured {stats.captured}</span>
-          <span className="text-zinc-500"> / </span>
-          <span className="text-zinc-400">free {stats.free}</span>
-        </div>
-        <div>bonds {stats.bonds}</div>
-        <div className="text-cyan-500/70">CA {stats.liveCA}%</div>
-        <div className={stats.predators > 0 ? "text-red-400" : "text-zinc-600"}>
-          predators {stats.predators}
-        </div>
+        <div className="text-zinc-200">{formatDuration(stats.runDurationMs)}</div>
+        <div className="text-zinc-500">peak {stats.peakCaptured}</div>
       </div>
 
+      {/* Top-right: captured count + trait chips. */}
       <div
-        className="pointer-events-none absolute right-2 z-10 w-36 rounded bg-black/45 px-2 py-1 font-mono text-[10px] leading-tight text-zinc-300 backdrop-blur sm:right-3 sm:w-44 sm:text-[11px] sm:leading-4"
+        className="pointer-events-none absolute right-2 top-2 flex flex-col items-end gap-1.5 font-mono text-[11px] text-zinc-300/90"
         style={{
-          top: "calc(max(0.5rem, env(safe-area-inset-top)) + 3rem)",
-          right: "max(0.5rem, env(safe-area-inset-right))",
+          top: "max(0.5rem, env(safe-area-inset-top))",
+          right: "max(0.75rem, env(safe-area-inset-right))",
         }}
       >
-        <div className="mb-1 text-[10px] uppercase tracking-wider text-zinc-500">traits</div>
-        {traitList.length === 0 ? (
-          <div className="text-zinc-600">— none yet —</div>
-        ) : (
-          traitList.map((id) => (
-            <div key={id} className="flex justify-between">
-              <span>{TRAIT_LABEL[id] ?? id}</span>
-              <span className="text-zinc-500">
-                ×{stats.traits.levels[id as keyof typeof stats.traits.levels]}
+        <div className="text-zinc-200">
+          <span className="text-cyan-300">{stats.captured}</span>
+          <span className="text-zinc-600"> bonded</span>
+        </div>
+        {traitList.length > 0 && (
+          <div className="flex flex-wrap justify-end gap-1">
+            {traitList.map((id) => (
+              <span
+                key={id}
+                className="rounded-full bg-cyan-300/10 px-2 py-0.5 text-[10px] text-cyan-200/85 ring-1 ring-cyan-300/20"
+              >
+                {TRAIT_LABEL[id] ?? id}
+                <span className="ml-1 text-cyan-200/50">
+                  ×{stats.traits.levels[id as keyof typeof stats.traits.levels]}
+                </span>
               </span>
-            </div>
-          ))
+            ))}
+          </div>
         )}
         {stats.traits.lockOnRange > 0 && (
-          <div className="mt-1 border-t border-zinc-700 pt-1 text-[10px] text-zinc-500">
-            tap prey to pull · {stats.lockOnReady ? "ready" : "cooling"}
+          <div className="rounded-full bg-black/30 px-2 py-0.5 text-[9px] text-zinc-400">
+            tap prey · {stats.lockOnReady ? "ready" : "cooling"}
           </div>
         )}
       </div>
 
-      <div
-        className="pointer-events-none absolute bottom-2 left-1/2 max-w-[92vw] -translate-x-1/2 rounded bg-black/45 px-3 py-1 text-center font-mono text-[10px] text-zinc-400 backdrop-blur sm:bottom-3"
-        style={{
-          bottom: "max(0.5rem, env(safe-area-inset-bottom))",
-        }}
-      >
-        <span className="hidden sm:inline">drag a captured cell · scroll to zoom · drag empty space to pan</span>
-        <span className="sm:hidden">drag captured · pinch to zoom · drag empty to pan</span>
-      </div>
+      {/* Predator warning: only when one is on the field. */}
+      {stats.predators > 0 && (
+        <div
+          className="pointer-events-none absolute left-1/2 -translate-x-1/2 font-mono text-[10px] uppercase tracking-[0.2em] text-red-400/80"
+          style={{ top: "calc(max(0.5rem, env(safe-area-inset-top)) + 0.25rem)" }}
+        >
+          predator · {stats.predators}
+        </div>
+      )}
+
+      {/* Bottom hint — fades after the player has bonded a few cells. */}
+      {stats.captured < 4 && (
+        <div
+          className="pointer-events-none absolute bottom-2 left-1/2 max-w-[92vw] -translate-x-1/2 text-center font-mono text-[10px] text-zinc-400/70 transition-opacity"
+          style={{ bottom: "max(0.75rem, env(safe-area-inset-bottom))" }}
+        >
+          <span className="hidden sm:inline">drag the bell to swim · scroll or pinch to zoom</span>
+          <span className="sm:hidden">drag the bell to swim · pinch to zoom</span>
+        </div>
+      )}
 
       {stats.runStatus !== "running" && (
         <div className="absolute inset-0 z-40 flex flex-col items-center justify-center gap-4 bg-black/70 px-6 backdrop-blur-sm">
