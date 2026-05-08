@@ -927,40 +927,52 @@ export function drawTracers(ctx: CanvasRenderingContext2D, world: World): void {
 /* ─── Thumbstick overlay (screen space) ──────────────────────────── */
 
 /**
- * Anchored thumbstick at the bottom-left corner. Drawn brighter than
- * before so it stays readable against the flat ocean bg.
+ * Anchored thumbstick — white-on-translucent disc with knob, matching
+ * the Uncle Grandpa game's controller style. Always visible at the
+ * bottom-left corner with drop shadow so it reads as a physical
+ * controller, not an overlay element.
  */
 export function drawThumbstick(ctx: CanvasRenderingContext2D, world: World): void {
   if (!world.stickAnchor || !world.stickKnob) return;
   const a = world.stickAnchor;
   const k = world.stickKnob;
   const engaged = !!world.stickInput;
-  // Anchor outer ring — brighter when engaged
-  ctx.fillStyle = "rgba(8, 30, 50, 0.5)";
+
+  // Base disc (110px diameter) — translucent white with thick border + shadow
+  ctx.save();
+  ctx.shadowColor = "rgba(0, 0, 0, 0.45)";
+  ctx.shadowBlur = 14;
+  ctx.shadowOffsetY = 4;
+  ctx.fillStyle = "rgba(255, 255, 255, 0.12)";
   ctx.beginPath();
-  ctx.arc(a.x, a.y, 50, 0, Math.PI * 2);
+  ctx.arc(a.x, a.y, 55, 0, Math.PI * 2);
   ctx.fill();
-  ctx.strokeStyle = engaged ? "rgba(96, 240, 255, 0.85)" : "rgba(64, 220, 255, 0.7)";
-  ctx.lineWidth = 2.5;
+  ctx.restore();
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.38)";
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.arc(a.x, a.y, 55, 0, Math.PI * 2);
   ctx.stroke();
-  // Knob halo
-  const knobHalo = ctx.createRadialGradient(k.x, k.y, 0, k.x, k.y, 32);
-  knobHalo.addColorStop(0, "rgba(96, 240, 255, 0.6)");
-  knobHalo.addColorStop(1, "rgba(64, 220, 255, 0)");
-  ctx.fillStyle = knobHalo;
+
+  // Knob (50px diameter) — brighter white with shadow + thick border
+  ctx.save();
+  ctx.shadowColor = "rgba(0, 0, 0, 0.4)";
+  ctx.shadowBlur = 8;
+  ctx.shadowOffsetY = 2;
+  ctx.fillStyle = engaged
+    ? "rgba(255, 255, 255, 0.7)"
+    : "rgba(255, 255, 255, 0.45)";
   ctx.beginPath();
-  ctx.arc(k.x, k.y, 32, 0, Math.PI * 2);
+  ctx.arc(k.x, k.y, 25, 0, Math.PI * 2);
   ctx.fill();
-  // Knob body
-  ctx.fillStyle = engaged ? "rgba(160, 250, 255, 0.95)" : "rgba(64, 220, 255, 0.92)";
+  ctx.restore();
+  ctx.strokeStyle = engaged
+    ? "rgba(255, 255, 255, 0.9)"
+    : "rgba(255, 255, 255, 0.65)";
+  ctx.lineWidth = 3;
   ctx.beginPath();
-  ctx.arc(k.x, k.y, 18, 0, Math.PI * 2);
-  ctx.fill();
-  // Knob highlight
-  ctx.fillStyle = "rgba(255, 255, 255, 0.7)";
-  ctx.beginPath();
-  ctx.arc(k.x - 5, k.y - 5, 6, 0, Math.PI * 2);
-  ctx.fill();
+  ctx.arc(k.x, k.y, 25, 0, Math.PI * 2);
+  ctx.stroke();
 }
 
 /* ─── Telegraphs (incoming-predator warning) ──────────────────────── */

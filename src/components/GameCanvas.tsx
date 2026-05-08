@@ -177,10 +177,11 @@ export default function GameCanvas() {
     // Thumbstick state — declared up-front so updateStickAnchor (called
     // from resize on mount) can safely read pointerDownAt without
     // tripping the TDZ.
-    const STICK_RADIUS = 50;
-    const STICK_ZONE_RADIUS = 75;
+    // Uncle-Grandpa-style controller: 110px base, 50px knob.
+    const STICK_RADIUS = 50; // max knob deflection from anchor
+    const STICK_ZONE_RADIUS = 90; // forgiving touch around the base
     const TAP_THRESHOLD = 6;
-    const ANCHOR_OFFSET = 90;
+    const ANCHOR_OFFSET = 95;
     const activePointers = new Set<number>();
     let pointerDownAt: { x: number; y: number; pointerId: number; isStick: boolean } | null = null;
 
