@@ -1545,7 +1545,6 @@ export class World {
     let best: Body | null = null;
     let bestSq = Infinity;
     for (const f of this.freeBodies) {
-      if (f.magnetized) continue;
       const dx = (f.x ?? 0) - cx;
       const dy = (f.y ?? 0) - cy;
       const d = dx * dx + dy * dy;
@@ -1577,7 +1576,6 @@ export class World {
     const core = this.entityBodies[0];
     const cx = core?.x ?? 0;
     const cy = core?.y ?? 0;
-    const PULL_SPEED = 6;
     const FEAR_R2_BELL = FEAR_RANGE_BELL * FEAR_RANGE_BELL;
     const FEAR_R2_PRED = FEAR_RANGE_PRED * FEAR_RANGE_PRED;
     // Build a single quadtree this tick for boids neighbor lookups.
@@ -1586,18 +1584,6 @@ export class World {
       ? buildQuadtree(this.freeBodies)
       : null;
     for (const b of this.freeBodies) {
-      if (b.magnetized) {
-        const dx = cx - (b.x ?? 0);
-        const dy = cy - (b.y ?? 0);
-        const len = Math.hypot(dx, dy);
-        if (len > 0) {
-          b.vx = (dx / len) * PULL_SPEED;
-          b.vy = (dy / len) * PULL_SPEED;
-        }
-        b.x = (b.x ?? 0) + (b.vx ?? 0) * scale;
-        b.y = (b.y ?? 0) + (b.vy ?? 0) * scale;
-        continue;
-      }
       let vx = b.vx ?? 0;
       let vy = b.vy ?? 0;
 
@@ -1748,28 +1734,6 @@ export class World {
       b.vx = vx;
       b.vy = vy;
     }
-  }
-
-  /**
-   * Player input: try to magnetize a free cell into the entity. Honors
-   * lock-on range and cooldown. Returns true if the request was
-   * accepted. Capture itself happens later when the magnetized cell
-   * arrives at the core (via integrator → captureNearby).
-   */
-  lockOn(target: Body, nowMs: number): boolean {
-    if (this.traits.lockOnRange <= 0) return false;
-    if (target.kind !== "free") return false;
-    if (target.magnetized) return false;
-    if (nowMs < this.lockOnReadyAt) return false;
-    if (this.entityBodies.length === 0) return false;
-    const core = this.entityBodies[0];
-    const dx = (target.x ?? 0) - (core.x ?? 0);
-    const dy = (target.y ?? 0) - (core.y ?? 0);
-    if (Math.hypot(dx, dy) > this.traits.lockOnRange) return false;
-    target.magnetized = true;
-    this.lockOnReadyAt = nowMs + this.traits.lockOnCooldownMs;
-    this.events.push("lockOn");
-    return true;
   }
 
   /**
@@ -1932,7 +1896,6 @@ export class World {
     const i = this.freeBodies.indexOf(free);
     if (i >= 0) this.freeBodies.splice(i, 1);
     free.kind = "captured";
-    free.magnetized = false;
 
     // Bump absorb counters.
     this.absorbed[free.type] = (this.absorbed[free.type] ?? 0) + 1;

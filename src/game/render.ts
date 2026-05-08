@@ -988,31 +988,6 @@ function drawCore(ctx: CanvasRenderingContext2D, world: World, core: Body): void
   }
 }
 
-/**
- * Dashed cyan tracer line from the core to each magnetized free cell.
- * Reads as "I am pulling that one in." Drawn between bonds and
- * bodies so it underlays the entity itself.
- */
-export function drawLockOnTracers(ctx: CanvasRenderingContext2D, world: World): void {
-  const core = world.entityBodies[0];
-  if (!core) return;
-  const T = currentTheme();
-  let any = false;
-  for (const b of world.freeBodies) {
-    if (!b.magnetized) continue;
-    if (!any) {
-      ctx.strokeStyle = `${T.tracer} 0.55)`;
-      ctx.lineWidth = 1.4;
-      ctx.setLineDash([6, 5]);
-      any = true;
-    }
-    ctx.beginPath();
-    ctx.moveTo(core.x ?? 0, core.y ?? 0);
-    ctx.lineTo(b.x ?? 0, b.y ?? 0);
-    ctx.stroke();
-  }
-  if (any) ctx.setLineDash([]);
-}
 
 export function drawBodies(
   ctx: CanvasRenderingContext2D,

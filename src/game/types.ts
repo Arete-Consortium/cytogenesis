@@ -27,10 +27,8 @@ export type BossKind = "swarmLord" | "tideMaw" | "abyssEye" | "centipede";
 export interface Body extends SimulationNodeDatum {
   id: string;
   type: NodeTypeId;
-  kind: "captured" | "free" | "predator";
+  kind: "captured" | "free" | "predator" | "rival";
   radius: number;
-  /** Lock-on flag: integrator routes this cell home to the core. Cleared on capture. */
-  magnetized?: boolean;
   /** Predator-only: physics tick at which recoil ends and AI resumes. */
   recoilUntil?: number;
   /** Predator-only: visual + behavior variant. */

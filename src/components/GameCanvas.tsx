@@ -392,7 +392,7 @@ export default function GameCanvas() {
       if (!hit) return;
       const now = performance.now();
       if (hit.kind === "predator") world.fireStinger(hit, now);
-      else if (hit.kind === "free") world.lockOn(hit, now);
+      // Free cells: tap is inert. Capture is contact-only.
     };
     const onPointerCancel = (e: PointerEvent) => {
       activePointers.delete(e.pointerId);
@@ -416,7 +416,7 @@ export default function GameCanvas() {
       const w = world.screenToWorld(sx, sy);
       const hit = world.hitTest(w.x, w.y);
       hoveredId = hit?.id ?? null;
-      if (hit && hit.kind === "free" && world.traits.lockOnRange > 0) {
+      if (hit && hit.kind === "predator" && world.traits.lockOnRange > 0) {
         canvas.style.cursor = "crosshair";
       } else if (pointerDownAt) {
         canvas.style.cursor = "grabbing";
@@ -665,7 +665,7 @@ export default function GameCanvas() {
         )}
         {stats.traits.lockOnRange > 0 && (
           <div className="rounded-full bg-black/30 px-2 py-0.5 text-[9px] text-zinc-400">
-            tap prey · {stats.lockOnReady ? "ready" : "cooling"}
+            stinger · {stats.lockOnReady ? "ready" : "cooling"}
           </div>
         )}
       </div>
