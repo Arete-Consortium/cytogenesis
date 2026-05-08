@@ -174,6 +174,18 @@ export default function GameCanvas() {
     let width = 0;
     let height = 0;
 
+    // Thumbstick anchored to bottom-left corner. Always visible.
+    const ANCHOR_OFFSET = 90;
+    const updateStickAnchor = () => {
+      const ax = ANCHOR_OFFSET;
+      const ay = height - ANCHOR_OFFSET;
+      world.stickAnchor = { x: ax, y: ay };
+      // Reset knob to centered when no active input.
+      if (!pointerDownAt || !pointerDownAt.isStick) {
+        world.stickKnob = { x: ax, y: ay };
+      }
+    };
+
     const resize = () => {
       dpr = computeDpr();
       width = canvas.clientWidth;
@@ -187,6 +199,7 @@ export default function GameCanvas() {
         world.camera.x = width / 2;
         world.camera.y = height / 2;
       }
+      updateStickAnchor();
     };
     resize();
     window.addEventListener("resize", resize);
@@ -235,25 +248,25 @@ export default function GameCanvas() {
     // Pinch zoom still works via d3.zoom on touch events; multi-touch
     // here cancels the stick.
     const STICK_RADIUS = 50;
+    const STICK_ZONE_RADIUS = 75; // forgiving touch around the anchor
     const TAP_THRESHOLD = 6;
     const activePointers = new Set<number>();
-    let pointerDownAt: { x: number; y: number; pointerId: number } | null = null;
+    let pointerDownAt: { x: number; y: number; pointerId: number; isStick: boolean } | null = null;
 
-    const clearStick = () => {
-      world.stickAnchor = null;
-      world.stickKnob = null;
+    const clearStickInput = () => {
+      // Anchor stays — always visible. Knob returns to center.
+      if (world.stickAnchor) {
+        world.stickKnob = { x: world.stickAnchor.x, y: world.stickAnchor.y };
+      }
       world.stickInput = null;
     };
 
     const onPointerDown = (e: PointerEvent) => {
-      // First user gesture also unlocks the audio context.
       audio.init();
-      // Tutorial dismisses on the first real touch (whether or not it
-      // produces motion — touching the canvas is the gesture).
       if (showTutorial) dismissTutorial();
       activePointers.add(e.pointerId);
       if (activePointers.size > 1) {
-        clearStick();
+        clearStickInput();
         pointerDownAt = null;
         return;
       }
@@ -261,26 +274,45 @@ export default function GameCanvas() {
       const rect = canvas.getBoundingClientRect();
       const sx = e.clientX - rect.left;
       const sy = e.clientY - rect.top;
-      pointerDownAt = { x: sx, y: sy, pointerId: e.pointerId };
-      world.stickAnchor = { x: sx, y: sy };
-      world.stickKnob = { x: sx, y: sy };
-      world.stickInput = null;
-      world.reheat(0.4);
+      // Did the touch land inside the stick zone?
+      const anchor = world.stickAnchor ?? { x: ANCHOR_OFFSET, y: height - ANCHOR_OFFSET };
+      const dxA = sx - anchor.x;
+      const dyA = sy - anchor.y;
+      const inStickZone = Math.hypot(dxA, dyA) <= STICK_ZONE_RADIUS;
+      pointerDownAt = { x: sx, y: sy, pointerId: e.pointerId, isStick: inStickZone };
+      if (inStickZone) {
+        // Engage stick — knob jumps to finger (clamped).
+        const len = Math.hypot(dxA, dyA);
+        let kx = sx;
+        let ky = sy;
+        if (len > STICK_RADIUS) {
+          kx = anchor.x + (dxA / len) * STICK_RADIUS;
+          ky = anchor.y + (dyA / len) * STICK_RADIUS;
+        }
+        world.stickKnob = { x: kx, y: ky };
+        if (len > 0.5) {
+          const t = Math.min(1, len / STICK_RADIUS);
+          world.stickInput = { ux: dxA / len, uy: dyA / len, t };
+        }
+        world.reheat(0.4);
+      }
     };
     const onPointerMoveStick = (e: PointerEvent) => {
       if (!pointerDownAt || pointerDownAt.pointerId !== e.pointerId) return;
       if (activePointers.size > 1) return;
+      if (!pointerDownAt.isStick) return; // tap path — ignore movement
       const rect = canvas.getBoundingClientRect();
       const sx = e.clientX - rect.left;
       const sy = e.clientY - rect.top;
-      const dx = sx - pointerDownAt.x;
-      const dy = sy - pointerDownAt.y;
+      const anchor = world.stickAnchor!;
+      const dx = sx - anchor.x;
+      const dy = sy - anchor.y;
       const len = Math.hypot(dx, dy);
       let kx = sx;
       let ky = sy;
       if (len > STICK_RADIUS) {
-        kx = pointerDownAt.x + (dx / len) * STICK_RADIUS;
-        ky = pointerDownAt.y + (dy / len) * STICK_RADIUS;
+        kx = anchor.x + (dx / len) * STICK_RADIUS;
+        ky = anchor.y + (dy / len) * STICK_RADIUS;
       }
       world.stickKnob = { x: kx, y: ky };
       if (len > 0.5) {
@@ -294,7 +326,7 @@ export default function GameCanvas() {
       activePointers.delete(e.pointerId);
       const start = pointerDownAt;
       if (!start || start.pointerId !== e.pointerId) {
-        clearStick();
+        clearStickInput();
         return;
       }
       pointerDownAt = null;
@@ -302,7 +334,9 @@ export default function GameCanvas() {
       const sx = e.clientX - rect.left;
       const sy = e.clientY - rect.top;
       const moved = Math.hypot(sx - start.x, sy - start.y);
-      clearStick();
+      const wasStick = start.isStick;
+      clearStickInput();
+      if (wasStick) return; // stick gestures don't fire taps
       if (moved > TAP_THRESHOLD) return;
       if (world.traits.lockOnRange <= 0) return;
       const w = world.screenToWorld(sx, sy);
@@ -315,7 +349,7 @@ export default function GameCanvas() {
     const onPointerCancel = (e: PointerEvent) => {
       activePointers.delete(e.pointerId);
       pointerDownAt = null;
-      clearStick();
+      clearStickInput();
     };
     canvas.addEventListener("pointerdown", onPointerDown, true);
     canvas.addEventListener("pointermove", onPointerMoveStick, true);
