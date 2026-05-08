@@ -20,9 +20,11 @@ import type { TraitState } from "@/game/traits";
 import { emptyTraitState } from "@/game/traits";
 import { audio } from "@/lib/audio";
 import { recordRun, type BestRun } from "@/meta/persist";
+import { setTheme, type ThemeId } from "@/data/themes";
 
 const MUTE_KEY = "cytogenesis:muted";
 const TUTORIAL_KEY = "cytogenesis:tutorialSeen";
+const THEME_KEY = "cytogenesis:theme";
 
 interface FrameStats {
   fps: number;
@@ -74,13 +76,15 @@ export default function GameCanvas() {
   );
   const hasRecordedRef = useRef(false);
 
-  // Initialize mute + tutorial from localStorage on mount.
+  // Initialize mute + tutorial + theme from localStorage on mount.
   useEffect(() => {
     if (typeof window === "undefined") return;
     const m = localStorage.getItem(MUTE_KEY) === "1";
     setMuted(m);
     audio.setMuted(m);
     setShowTutorial(localStorage.getItem(TUTORIAL_KEY) !== "1");
+    const saved = localStorage.getItem(THEME_KEY) as ThemeId | null;
+    setTheme(saved === "galactic" ? "galactic" : "aquatic");
   }, []);
 
   const toggleMute = () => {

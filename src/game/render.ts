@@ -1,6 +1,6 @@
 import type { World } from "./world";
 import type { Body, NodeTypeId } from "./types";
-import { NODE_COLOR } from "@/data/nodeTypes";
+import { currentTheme } from "@/data/themes";
 
 /* ─── Background: ocean depth + light shafts ─────────────────────── */
 
@@ -15,10 +15,11 @@ export function drawBackground(
   height: number,
   tickN = 0,
 ): void {
+  const T = currentTheme();
   const depth = ctx.createLinearGradient(0, 0, 0, height);
-  depth.addColorStop(0, "#0c2440");
-  depth.addColorStop(0.45, "#061a30");
-  depth.addColorStop(1, "#020812");
+  depth.addColorStop(0, T.bg[0]);
+  depth.addColorStop(0.45, T.bg[1]);
+  depth.addColorStop(1, T.bg[2]);
   ctx.fillStyle = depth;
   ctx.fillRect(0, 0, width, height);
 
@@ -30,9 +31,9 @@ export function drawBackground(
     const x = drift - 100;
     const w = 220;
     const grad = ctx.createLinearGradient(x, 0, x + w * 0.6, height);
-    grad.addColorStop(0, "rgba(180, 220, 255, 0.06)");
-    grad.addColorStop(0.6, "rgba(180, 220, 255, 0.02)");
-    grad.addColorStop(1, "rgba(180, 220, 255, 0)");
+    grad.addColorStop(0, `${T.shaft} 0.06)`);
+    grad.addColorStop(0.6, `${T.shaft} 0.02)`);
+    grad.addColorStop(1, `${T.shaft} 0)`);
     ctx.fillStyle = grad;
     ctx.beginPath();
     ctx.moveTo(x, 0);
@@ -55,6 +56,7 @@ export function drawAmbientPlankton(
   height: number,
   tickN: number,
 ): void {
+  const T = currentTheme();
   const count = 90;
   for (let i = 0; i < count; i++) {
     const seed = i * 9301.7 + 49297;
@@ -64,7 +66,7 @@ export function drawAmbientPlankton(
       (height + 20)) - 10;
     const flick = 0.18 + 0.12 * Math.sin(seed * 7 + tickN * 0.04);
     const r = 0.7 + (i % 4) * 0.4;
-    ctx.fillStyle = `rgba(190, 230, 255, ${flick.toFixed(3)})`;
+    ctx.fillStyle = `${T.ambient} ${flick.toFixed(3)})`;
     ctx.beginPath();
     ctx.arc(sx, sy, r, 0, Math.PI * 2);
     ctx.fill();
@@ -75,6 +77,7 @@ export function drawAmbientPlankton(
 
 let caBuffer: HTMLCanvasElement | null = null;
 let caBufferLastSteps = -1;
+let caBufferLastTheme: string | null = null;
 
 /**
  * Conway grid rendered as a soft cyan-green bloom. Each live cell
@@ -94,7 +97,9 @@ export function drawEnvCA(ctx: CanvasRenderingContext2D, world: World): void {
     caBuffer.height = ca.height;
     caBufferLastSteps = -1;
   }
-  if (caBufferLastSteps !== ca.steps) {
+  // Theme color shift invalidates the buffer too — track last theme id.
+  const T = currentTheme();
+  if (caBufferLastSteps !== ca.steps || caBufferLastTheme !== T.id) {
     const bctx = caBuffer.getContext("2d");
     if (!bctx) return;
     const img = bctx.createImageData(ca.width, ca.height);
@@ -102,18 +107,17 @@ export function drawEnvCA(ctx: CanvasRenderingContext2D, world: World): void {
     for (let i = 0; i < ca.cells.length; i++) {
       const k = i * 4;
       if (ca.cells[i]) {
-        // Soft sea-glass cyan, low alpha so it stays an underlay
-        // and never competes with the creatures.
-        data[k] = 96;
-        data[k + 1] = 200;
-        data[k + 2] = 190;
-        data[k + 3] = 28;
+        data[k] = T.ca.r;
+        data[k + 1] = T.ca.g;
+        data[k + 2] = T.ca.b;
+        data[k + 3] = T.ca.a;
       } else {
         data[k + 3] = 0;
       }
     }
     bctx.putImageData(img, 0, 0);
     caBufferLastSteps = ca.steps;
+    caBufferLastTheme = T.id;
   }
   // Tile the CA buffer 3×3 around the arena so the torus edge never
   // shows as a hard rectangle when the player drifts to the boundary.
@@ -133,6 +137,7 @@ export function drawEnvCA(ctx: CanvasRenderingContext2D, world: World): void {
 
 export function drawBonds(ctx: CanvasRenderingContext2D, world: World): void {
   if (world.bonds.length === 0) return;
+  const NC = currentTheme().nodeColors;
   ctx.lineCap = "round";
   for (const bond of world.bonds) {
     const s = typeof bond.source === "string" ? null : (bond.source as Body);
@@ -149,8 +154,8 @@ export function drawBonds(ctx: CanvasRenderingContext2D, world: World): void {
     const mx = (sx + tx) / 2 + (-dy / len) * sag;
     const my = (sy + ty) / 2 + (dx / len) * sag;
     const grad = ctx.createLinearGradient(sx, sy, tx, ty);
-    grad.addColorStop(0, NODE_COLOR[s.type]);
-    grad.addColorStop(1, NODE_COLOR[t.type]);
+    grad.addColorStop(0, NC[s.type]);
+    grad.addColorStop(1, NC[t.type]);
     ctx.strokeStyle = grad;
     ctx.globalAlpha = 0.32 + 0.32 * bond.strength;
     ctx.lineWidth = 2.5 + bond.strength;
@@ -192,7 +197,7 @@ function drawPropulsion(ctx: CanvasRenderingContext2D, b: Body, t: number) {
   const sp = Math.hypot(vx, vy) || 1;
   const dx = -vx / sp;
   const dy = -vy / sp;
-  const fill = NODE_COLOR.propulsion;
+  const fill = currentTheme().nodeColors.propulsion;
   // Tail (wagging sin wave behind direction of motion)
   ctx.strokeStyle = fill;
   ctx.lineWidth = 1.6;
@@ -226,7 +231,7 @@ function drawSensor(ctx: CanvasRenderingContext2D, b: Body) {
   const x = b.x ?? 0;
   const y = b.y ?? 0;
   const r = b.radius;
-  ctx.fillStyle = NODE_COLOR.sensor;
+  ctx.fillStyle = currentTheme().nodeColors.sensor;
   ctx.beginPath();
   ctx.arc(x, y, r, 0, Math.PI * 2);
   ctx.fill();
@@ -246,7 +251,7 @@ function drawMembrane(ctx: CanvasRenderingContext2D, b: Body) {
   const x = b.x ?? 0;
   const y = b.y ?? 0;
   const r = b.radius;
-  ctx.fillStyle = NODE_COLOR.membrane;
+  ctx.fillStyle = currentTheme().nodeColors.membrane;
   ctx.beginPath();
   for (let i = 0; i < 6; i++) {
     const a = (i / 6) * Math.PI * 2 - Math.PI / 6;
@@ -267,7 +272,7 @@ function drawMouth(ctx: CanvasRenderingContext2D, b: Body, t: number) {
   const y = b.y ?? 0;
   const r = b.radius;
   const open = 0.35 + Math.sin(t * 0.07) * 0.15;
-  ctx.fillStyle = NODE_COLOR.mouth;
+  ctx.fillStyle = currentTheme().nodeColors.mouth;
   ctx.beginPath();
   ctx.arc(x, y, r, open, Math.PI * 2 - open);
   ctx.lineTo(x, y);
@@ -279,7 +284,7 @@ function drawStinger(ctx: CanvasRenderingContext2D, b: Body) {
   const x = b.x ?? 0;
   const y = b.y ?? 0;
   const r = b.radius;
-  ctx.fillStyle = NODE_COLOR.stinger;
+  ctx.fillStyle = currentTheme().nodeColors.stinger;
   ctx.beginPath();
   const points = 6;
   for (let i = 0; i < points * 2; i++) {
@@ -298,7 +303,7 @@ function drawChloroplast(ctx: CanvasRenderingContext2D, b: Body) {
   const x = b.x ?? 0;
   const y = b.y ?? 0;
   const r = b.radius;
-  ctx.fillStyle = NODE_COLOR.chloroplast;
+  ctx.fillStyle = currentTheme().nodeColors.chloroplast;
   ctx.beginPath();
   ctx.ellipse(x, y, r * 1.25, r * 0.7, 0, 0, Math.PI * 2);
   ctx.fill();
@@ -312,7 +317,7 @@ function drawMitochondrion(ctx: CanvasRenderingContext2D, b: Body) {
   const x = b.x ?? 0;
   const y = b.y ?? 0;
   const r = b.radius;
-  ctx.fillStyle = NODE_COLOR.mitochondrion;
+  ctx.fillStyle = currentTheme().nodeColors.mitochondrion;
   ctx.beginPath();
   ctx.ellipse(x, y, r * 1.3, r * 0.7, 0, 0, Math.PI * 2);
   ctx.fill();
@@ -330,7 +335,7 @@ function drawSpore(ctx: CanvasRenderingContext2D, b: Body) {
   const x = b.x ?? 0;
   const y = b.y ?? 0;
   const r = b.radius;
-  ctx.fillStyle = NODE_COLOR.spore;
+  ctx.fillStyle = currentTheme().nodeColors.spore;
   for (let i = 0; i < 5; i++) {
     const a = (i / 5) * Math.PI * 2;
     const px = x + Math.cos(a) * r * 0.55;
@@ -372,7 +377,7 @@ function drawCell(
   const y = b.y ?? 0;
   const r = b.radius;
   const haloAlpha = b.kind === "captured" ? 0.55 : 0.32;
-  BODY_HALO(ctx, x, y, r, NODE_COLOR[b.type], haloAlpha);
+  BODY_HALO(ctx, x, y, r, currentTheme().nodeColors[b.type], haloAlpha);
   SHAPE_DRAWERS[b.type](ctx, b, t);
   if (dragging) {
     ctx.lineWidth = 2.2;
@@ -394,13 +399,14 @@ function drawCell(
 function drawCoreTrail(ctx: CanvasRenderingContext2D, world: World): void {
   const trail = world.coreTrail;
   if (trail.length < 4) return;
+  const T = currentTheme();
   ctx.lineCap = "round";
   ctx.lineWidth = 4;
   for (let i = 1; i < trail.length; i++) {
     const a = trail[i - 1];
     const b = trail[i];
     const alpha = (i / trail.length) * 0.28;
-    ctx.strokeStyle = `rgba(64, 220, 255, ${alpha})`;
+    ctx.strokeStyle = `${T.bell.trail} ${alpha.toFixed(3)})`;
     ctx.beginPath();
     ctx.moveTo(a.x, a.y);
     ctx.lineTo(b.x, b.y);
@@ -436,20 +442,16 @@ function drawCore(ctx: CanvasRenderingContext2D, world: World, core: Body): void
     cachedBellAngle += delta * 0.15;
   }
 
+  const T = currentTheme();
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(cachedBellAngle);
 
-  // Outer halo — gold-tinted while combo buff is active.
+  // Outer halo — combo buff swaps to gold/amber per theme.
   const comboActive = world.wallMs < world.comboActiveUntilMs;
   const halo = ctx.createRadialGradient(0, 0, rr * 0.6, 0, 0, rr * 2.4);
-  if (comboActive) {
-    halo.addColorStop(0, "rgba(255, 215, 100, 0.42)");
-    halo.addColorStop(1, "rgba(255, 215, 100, 0)");
-  } else {
-    halo.addColorStop(0, "rgba(64, 220, 255, 0.28)");
-    halo.addColorStop(1, "rgba(64, 220, 255, 0)");
-  }
+  halo.addColorStop(0, comboActive ? T.combo.halo0 : T.bell.halo0);
+  halo.addColorStop(1, comboActive ? T.combo.halo1 : T.bell.halo1);
   ctx.fillStyle = halo;
   ctx.beginPath();
   ctx.arc(0, 0, rr * 2.4, 0, Math.PI * 2);
@@ -471,8 +473,8 @@ function drawCore(ctx: CanvasRenderingContext2D, world: World, core: Body): void
       ctx.lineTo(startX + wave, startY + length * f);
     }
     const grad = ctx.createLinearGradient(startX, startY, startX, startY + length);
-    grad.addColorStop(0, "rgba(96, 240, 255, 0.7)");
-    grad.addColorStop(1, "rgba(64, 220, 255, 0)");
+    grad.addColorStop(0, T.bell.tentacle0);
+    grad.addColorStop(1, T.bell.tentacle1);
     ctx.strokeStyle = grad;
     ctx.lineWidth = 1.8 - Math.abs(strand) * 0.25;
     ctx.stroke();
@@ -480,20 +482,20 @@ function drawCore(ctx: CanvasRenderingContext2D, world: World, core: Body): void
 
   // Bell (translucent dome)
   const bell = ctx.createRadialGradient(0, -rr * 0.35, rr * 0.1, 0, 0, rr);
-  bell.addColorStop(0, "rgba(220, 252, 255, 0.92)");
-  bell.addColorStop(0.55, "rgba(64, 220, 255, 0.62)");
-  bell.addColorStop(1, "rgba(8, 145, 178, 0.22)");
+  bell.addColorStop(0, T.bell.bellInner);
+  bell.addColorStop(0.55, T.bell.bellMid);
+  bell.addColorStop(1, T.bell.bellOuter);
   ctx.fillStyle = bell;
   ctx.beginPath();
   ctx.arc(0, 0, rr, 0, Math.PI * 2);
   ctx.fill();
 
-  ctx.strokeStyle = "rgba(220, 252, 255, 0.45)";
+  ctx.strokeStyle = T.bell.rim;
   ctx.lineWidth = 1.1;
   ctx.stroke();
 
   // Internal organs
-  ctx.fillStyle = "rgba(34, 211, 238, 0.55)";
+  ctx.fillStyle = T.bell.organ;
   for (let i = -1; i <= 1; i++) {
     ctx.beginPath();
     ctx.arc(i * rr * 0.28, -rr * 0.05, rr * 0.09, 0, Math.PI * 2);
@@ -501,7 +503,7 @@ function drawCore(ctx: CanvasRenderingContext2D, world: World, core: Body): void
   }
 
   // Top highlight
-  ctx.fillStyle = "rgba(255, 255, 255, 0.28)";
+  ctx.fillStyle = T.bell.highlight;
   ctx.beginPath();
   ctx.ellipse(-rr * 0.25, -rr * 0.5, rr * 0.4, rr * 0.13, -0.2, 0, Math.PI * 2);
   ctx.fill();
@@ -517,11 +519,12 @@ function drawCore(ctx: CanvasRenderingContext2D, world: World, core: Body): void
 export function drawLockOnTracers(ctx: CanvasRenderingContext2D, world: World): void {
   const core = world.entityBodies[0];
   if (!core) return;
+  const T = currentTheme();
   let any = false;
   for (const b of world.freeBodies) {
     if (!b.magnetized) continue;
     if (!any) {
-      ctx.strokeStyle = "rgba(96, 240, 255, 0.55)";
+      ctx.strokeStyle = `${T.tracer} 0.55)`;
       ctx.lineWidth = 1.4;
       ctx.setLineDash([6, 5]);
       any = true;
@@ -565,6 +568,7 @@ function drawSkirmisherPredator(
   p: Body,
   t: number,
 ): void {
+  const T = currentTheme().predator;
   const x = p.x ?? 0;
   const y = p.y ?? 0;
   const r = p.radius * 1.25;
@@ -573,8 +577,8 @@ function drawSkirmisherPredator(
 
   ctx.globalAlpha = recoiling ? 0.4 : 1;
   const halo = ctx.createRadialGradient(x, y, r * 0.6, x, y, r * 2.6);
-  halo.addColorStop(0, "rgba(220, 38, 38, 0.42)");
-  halo.addColorStop(1, "rgba(220, 38, 38, 0)");
+  halo.addColorStop(0, T.halo0);
+  halo.addColorStop(1, T.halo1);
   ctx.fillStyle = halo;
   ctx.beginPath();
   ctx.arc(x, y, r * 2.6, 0, Math.PI * 2);
@@ -583,16 +587,14 @@ function drawSkirmisherPredator(
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(angle);
-  // Dart-like teardrop body
-  ctx.fillStyle = recoiling ? "#1c0608" : "#3a0e10";
+  ctx.fillStyle = recoiling ? T.bodyDarkRecoil : T.bodyDark;
   ctx.beginPath();
   ctx.ellipse(0, 0, r, r * 0.7, 0, 0, Math.PI * 2);
   ctx.fill();
-  ctx.strokeStyle = "rgba(254, 202, 202, 0.45)";
+  ctx.strokeStyle = T.rim;
   ctx.lineWidth = 1.2;
   ctx.stroke();
-  // 3 sharp front teeth
-  ctx.fillStyle = "rgba(255, 240, 240, 0.85)";
+  ctx.fillStyle = T.teeth;
   for (let i = -1; i <= 1; i++) {
     const ty = i * r * 0.32;
     ctx.beginPath();
@@ -602,8 +604,7 @@ function drawSkirmisherPredator(
     ctx.closePath();
     ctx.fill();
   }
-  // Eye
-  ctx.fillStyle = "rgba(255, 230, 230, 0.85)";
+  ctx.fillStyle = T.eye;
   ctx.beginPath();
   ctx.arc(r * 0.25, -r * 0.2, r * 0.1, 0, Math.PI * 2);
   ctx.fill();
@@ -611,15 +612,15 @@ function drawSkirmisherPredator(
   const lurePhase = t * 0.05 + (x + y) * 0.001;
   const lx = r * 1.45 + Math.sin(lurePhase) * 2.5;
   const ly = -r * 0.55 + Math.cos(lurePhase) * 2.5;
-  ctx.strokeStyle = "rgba(120, 30, 30, 0.7)";
+  ctx.strokeStyle = T.lureLine;
   ctx.lineWidth = 1;
   ctx.beginPath();
   ctx.moveTo(0, -r * 0.55);
   ctx.quadraticCurveTo(r * 0.7, -r * 0.85, lx, ly);
   ctx.stroke();
   const lureGlow = ctx.createRadialGradient(lx, ly, 0, lx, ly, r * 0.65);
-  lureGlow.addColorStop(0, "rgba(255, 120, 120, 0.95)");
-  lureGlow.addColorStop(1, "rgba(255, 80, 80, 0)");
+  lureGlow.addColorStop(0, T.lure0);
+  lureGlow.addColorStop(1, T.lure1);
   ctx.fillStyle = lureGlow;
   ctx.beginPath();
   ctx.arc(lx, ly, r * 0.65, 0, Math.PI * 2);
@@ -637,6 +638,7 @@ function drawBrutePredator(
   p: Body,
   t: number,
 ): void {
+  const T = currentTheme().brute;
   const x = p.x ?? 0;
   const y = p.y ?? 0;
   const r = p.radius * 1.15;
@@ -644,10 +646,9 @@ function drawBrutePredator(
   const angle = Math.atan2(p.vy ?? 0, p.vx ?? 0) || 0;
 
   ctx.globalAlpha = recoiling ? 0.4 : 1;
-  // Bigger, darker halo
   const halo = ctx.createRadialGradient(x, y, r * 0.7, x, y, r * 2.8);
-  halo.addColorStop(0, "rgba(180, 20, 20, 0.5)");
-  halo.addColorStop(1, "rgba(180, 20, 20, 0)");
+  halo.addColorStop(0, T.halo0);
+  halo.addColorStop(1, T.halo1);
   ctx.fillStyle = halo;
   ctx.beginPath();
   ctx.arc(x, y, r * 2.8, 0, Math.PI * 2);
@@ -656,24 +657,22 @@ function drawBrutePredator(
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(angle);
-  // Bulky body — wider, almost circular
-  ctx.fillStyle = recoiling ? "#0e0303" : "#1f0507";
+  ctx.fillStyle = recoiling ? T.bodyDarkRecoil : T.bodyDark;
   ctx.beginPath();
   ctx.ellipse(0, 0, r, r * 0.95, 0, 0, Math.PI * 2);
   ctx.fill();
-  ctx.strokeStyle = "rgba(254, 130, 130, 0.6)";
+  ctx.strokeStyle = T.rim;
   ctx.lineWidth = 1.6;
   ctx.stroke();
-  // Chitin segmentation — 3 darker arcs across the body
-  ctx.strokeStyle = "rgba(0, 0, 0, 0.55)";
+  // Chitin segmentation
+  ctx.strokeStyle = T.chitin;
   ctx.lineWidth = 1.2;
   for (let i = -1; i <= 1; i++) {
     ctx.beginPath();
     ctx.arc(i * r * 0.25, 0, r * 0.85, -Math.PI * 0.4, Math.PI * 0.4);
     ctx.stroke();
   }
-  // 5 jagged front teeth
-  ctx.fillStyle = "rgba(255, 240, 240, 0.9)";
+  ctx.fillStyle = T.teeth;
   for (let i = -2; i <= 2; i++) {
     const ty = i * r * 0.22;
     ctx.beginPath();
@@ -683,8 +682,7 @@ function drawBrutePredator(
     ctx.closePath();
     ctx.fill();
   }
-  // Two eye dots — upper + lower
-  ctx.fillStyle = "rgba(255, 220, 220, 0.85)";
+  ctx.fillStyle = T.eye;
   for (const ey of [-r * 0.32, r * 0.32]) {
     ctx.beginPath();
     ctx.arc(r * 0.18, ey, r * 0.09, 0, Math.PI * 2);
@@ -793,11 +791,11 @@ export function drawTelegraphs(
     const baseAlpha = (1 - remaining) * 0.35 + pulse * 0.5;
     const alpha = Math.min(0.95, baseAlpha);
     const angle = Math.atan2(sy - cy, sx - cx);
+    const T = currentTheme();
     ctx.save();
     ctx.translate(ax, ay);
     ctx.rotate(angle);
-    // Chevron pointing forward
-    ctx.fillStyle = `rgba(239, 68, 68, ${alpha.toFixed(3)})`;
+    ctx.fillStyle = `${T.telegraph} ${alpha.toFixed(3)})`;
     ctx.beginPath();
     ctx.moveTo(0, 0);
     ctx.lineTo(-14, -8);
@@ -805,8 +803,7 @@ export function drawTelegraphs(
     ctx.lineTo(-14, 8);
     ctx.closePath();
     ctx.fill();
-    // Faint trailing line for orientation
-    ctx.strokeStyle = `rgba(239, 68, 68, ${(alpha * 0.5).toFixed(3)})`;
+    ctx.strokeStyle = `${T.telegraph} ${(alpha * 0.5).toFixed(3)})`;
     ctx.lineWidth = 1.5;
     ctx.beginPath();
     ctx.moveTo(-14, 0);

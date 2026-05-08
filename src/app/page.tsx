@@ -1,5 +1,6 @@
 import Link from "next/link";
 import TitleStats from "@/components/TitleStats";
+import ThemePicker from "@/components/ThemePicker";
 
 export default function Home() {
   return (
@@ -10,6 +11,7 @@ export default function Home() {
       <p className="max-w-md text-sm text-zinc-400 sm:text-base">
         Drift. Capture. Evolve. A roguelike cellular-automation game.
       </p>
+      <ThemePicker />
       <Link
         href="/play"
         className="inline-flex h-12 min-w-[200px] items-center justify-center rounded-full border border-zinc-700 px-8 font-medium text-zinc-100 transition-colors hover:bg-zinc-800 active:bg-zinc-900"
