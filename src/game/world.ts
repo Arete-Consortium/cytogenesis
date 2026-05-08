@@ -1649,6 +1649,19 @@ export class World {
         this.events.push("hit");
         this.emitSparkle(cx, cy, "rgba(248, 113, 113,");
         h.nextDamageTickN = this.tickN + HIVE_PLAYER_DAMAGE_COOLDOWN_TICKS;
+        // Toxic-bell counter — player's stinger count hurts the queen
+        // on contact (reduced while drones still shield her).
+        const stingers = this.absorbed.stinger ?? 0;
+        if (stingers > 0 && h.body.health != null) {
+          const dmg = h.drones.length > 0
+            ? Math.max(1, Math.round(stingers * (1 - HIVE_QUEEN_DR_WITH_DRONES)))
+            : stingers;
+          h.body.health -= dmg;
+          if (h.body.health <= 0) {
+            this.killHiveQueen();
+            return;
+          }
+        }
       } else {
         for (const d of h.drones) {
           const ddx = cx - (d.x ?? 0);
@@ -1660,6 +1673,16 @@ export class World {
             this.events.push("hit");
             this.emitSparkle(cx, cy, "rgba(248, 113, 113,");
             h.nextDamageTickN = this.tickN + HIVE_PLAYER_DAMAGE_COOLDOWN_TICKS;
+            // Toxic-bell counter — kills drones via contact
+            const stingers = this.absorbed.stinger ?? 0;
+            if (stingers > 0 && d.health != null) {
+              d.health -= stingers;
+              if (d.health <= 0) {
+                h.drones = h.drones.filter((x) => x !== d);
+                this.predators = this.predators.filter((p) => p !== d);
+                this.emitSparkle(d.x ?? 0, d.y ?? 0, "rgba(255, 200, 120,");
+              }
+            }
             break;
           }
         }
@@ -1709,6 +1732,16 @@ export class World {
         this.events.push("hit");
         this.emitSparkle(cx, cy, "rgba(248, 113, 113,");
         m.nextDamageTickN = this.tickN + MIRROR_PLAYER_DAMAGE_COOLDOWN_TICKS;
+        // Toxic-bell counter — player's stingers damage mirror on
+        // contact. Mirror has no drone shield so this is full damage.
+        const stingers = this.absorbed.stinger ?? 0;
+        if (stingers > 0 && m.body.health != null) {
+          m.body.health -= stingers;
+          if (m.body.health <= 0) {
+            this.killMirror();
+            return;
+          }
+        }
       }
     }
   }

@@ -1142,8 +1142,13 @@ export function drawPredators(ctx: CanvasRenderingContext2D, world: World): void
   }
 }
 
-/* ─── Hive Queen ──────────────────────────────────────────────────── */
+/* ─── Volvox (was Hive Queen) ────────────────────────────────────── */
 
+/**
+ * Volvox-style colonial alga. The "queen" is a large hollow sphere
+ * of cells (drawn as a stippled membrane); the "drones" are daughter
+ * colonies budding off and orbiting it. Algal-green palette.
+ */
 function drawHiveQueen(ctx: CanvasRenderingContext2D, world: World): void {
   const h = world.hiveQueen;
   if (!h) return;
@@ -1153,19 +1158,20 @@ function drawHiveQueen(ctx: CanvasRenderingContext2D, world: World): void {
   const qy = q.y ?? 0;
   const qr = q.radius;
 
-  // Halo — purple-amber threat aura, pulses with tick.
+  // Algal halo — soft chlorophyll green.
   const haloPulse = 0.7 + 0.3 * Math.sin(t * 0.07);
   const halo = ctx.createRadialGradient(qx, qy, qr * 0.4, qx, qy, qr * 3);
-  halo.addColorStop(0, `rgba(220, 130, 60, ${(0.3 * haloPulse).toFixed(3)})`);
-  halo.addColorStop(1, "rgba(220, 130, 60, 0)");
+  halo.addColorStop(0, `rgba(120, 200, 110, ${(0.32 * haloPulse).toFixed(3)})`);
+  halo.addColorStop(1, "rgba(120, 200, 110, 0)");
   ctx.fillStyle = halo;
   ctx.beginPath();
   ctx.arc(qx, qy, qr * 3, 0, Math.PI * 2);
   ctx.fill();
 
-  // Tether lines from queen to each living drone — thin glow strands
-  // so the structure reads as a hive, not just clumped circles.
-  ctx.strokeStyle = `rgba(255, 200, 120, 0.25)`;
+  // Faint mucilage tethers — thin gel strands connecting parent
+  // colony to daughter colonies (Volvox mother-daughter cytoplasmic
+  // bridges).
+  ctx.strokeStyle = `rgba(170, 230, 150, 0.22)`;
   ctx.lineWidth = 1.4;
   for (const d of h.drones) {
     ctx.beginPath();
@@ -1174,68 +1180,80 @@ function drawHiveQueen(ctx: CanvasRenderingContext2D, world: World): void {
     ctx.stroke();
   }
 
-  // Drones — small armored orbs with a faint trail in their orbit
-  // direction. Each gets a glowing stinger tip.
+  // Daughter colonies — translucent green spheres with a faint
+  // cellular pattern + brighter chloroplast pinpoint.
   for (const d of h.drones) {
     const dx = d.x ?? 0;
     const dy = d.y ?? 0;
-    // Mini halo
     const dh = ctx.createRadialGradient(dx, dy, 0, dx, dy, d.radius * 2);
-    dh.addColorStop(0, "rgba(255, 200, 120, 0.55)");
-    dh.addColorStop(1, "rgba(255, 200, 120, 0)");
+    dh.addColorStop(0, "rgba(140, 220, 130, 0.55)");
+    dh.addColorStop(1, "rgba(140, 220, 130, 0)");
     ctx.fillStyle = dh;
     ctx.beginPath();
     ctx.arc(dx, dy, d.radius * 2, 0, Math.PI * 2);
     ctx.fill();
-    // Body — dark olive with bright dot center
-    ctx.fillStyle = "#2a1408";
+    // Body — pale jade with subtle gradient
+    const dg = ctx.createRadialGradient(dx, dy, 0, dx, dy, d.radius);
+    dg.addColorStop(0, "rgba(180, 240, 170, 0.95)");
+    dg.addColorStop(1, "rgba(80, 140, 70, 0.85)");
+    ctx.fillStyle = dg;
     ctx.beginPath();
     ctx.arc(dx, dy, d.radius, 0, Math.PI * 2);
     ctx.fill();
-    ctx.strokeStyle = "#f5b572";
+    ctx.strokeStyle = "rgba(50, 100, 50, 0.7)";
     ctx.lineWidth = 1.2;
     ctx.stroke();
-    // Hot core
-    ctx.fillStyle = "rgba(255, 220, 130, 0.95)";
+    // Chloroplast spot
+    ctx.fillStyle = "rgba(40, 90, 30, 0.85)";
     ctx.beginPath();
-    ctx.arc(dx, dy, d.radius * 0.32, 0, Math.PI * 2);
+    ctx.arc(dx + d.radius * 0.18, dy - d.radius * 0.15, d.radius * 0.22, 0, Math.PI * 2);
     ctx.fill();
   }
 
-  // Queen body — large segmented carapace. Two layers of armor + a
-  // glowing core that pulses.
+  // Parent colony body — large translucent sphere with a stippled
+  // membrane of small constituent cells (Volvox is a colony of
+  // ~500-50000 cells arranged in a hollow sphere).
   const corePulse = 0.6 + 0.4 * Math.sin(t * 0.09);
-  // Outer plate
-  ctx.fillStyle = "#2a0c08";
+  // Cell-fill membrane
+  const mg = ctx.createRadialGradient(qx, qy, 0, qx, qy, qr);
+  mg.addColorStop(0, "rgba(100, 180, 90, 0.30)");
+  mg.addColorStop(0.7, "rgba(60, 130, 60, 0.55)");
+  mg.addColorStop(1, "rgba(40, 100, 50, 0.85)");
+  ctx.fillStyle = mg;
   ctx.beginPath();
   ctx.arc(qx, qy, qr, 0, Math.PI * 2);
   ctx.fill();
-  ctx.strokeStyle = "#6a2010";
-  ctx.lineWidth = 2.5;
+  ctx.strokeStyle = "rgba(80, 160, 80, 0.85)";
+  ctx.lineWidth = 2;
   ctx.stroke();
-  // Plate seams (6 radial)
-  ctx.strokeStyle = "rgba(0, 0, 0, 0.55)";
-  ctx.lineWidth = 1.4;
-  for (let i = 0; i < 6; i++) {
-    const a = (i / 6) * Math.PI * 2;
-    ctx.beginPath();
-    ctx.moveTo(qx + Math.cos(a) * qr * 0.35, qy + Math.sin(a) * qr * 0.35);
-    ctx.lineTo(qx + Math.cos(a) * qr * 0.95, qy + Math.sin(a) * qr * 0.95);
-    ctx.stroke();
+  // Stippled constituent cells — small dots arrayed around the
+  // membrane suggesting the colonial structure.
+  ctx.fillStyle = "rgba(180, 240, 170, 0.55)";
+  const cellRings = 3;
+  for (let ring = 0; ring < cellRings; ring++) {
+    const ringR = qr * (0.45 + ring * 0.18);
+    const cellsInRing = 6 + ring * 4;
+    const phaseOffset = ring * 0.4 + t * 0.012;
+    for (let i = 0; i < cellsInRing; i++) {
+      const a = (i / cellsInRing) * Math.PI * 2 + phaseOffset;
+      const px = qx + Math.cos(a) * ringR;
+      const py = qy + Math.sin(a) * ringR;
+      ctx.beginPath();
+      ctx.arc(px, py, 1.6, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
-  // Inner plate
-  ctx.fillStyle = "#4a1410";
-  ctx.beginPath();
-  ctx.arc(qx, qy, qr * 0.55, 0, Math.PI * 2);
-  ctx.fill();
-  // Glowing pulse core — visibly stronger when drones are gone
-  const coreVis = h.drones.length === 0 ? 0.95 : 0.55;
-  ctx.fillStyle = `rgba(255, ${Math.round(120 + 80 * corePulse)}, 60, ${coreVis})`;
-  ctx.beginPath();
-  ctx.arc(qx, qy, qr * (0.25 + 0.1 * corePulse), 0, Math.PI * 2);
-  ctx.fill();
-  // Vulnerability ring when drones are dead — sharp red rim that
-  // reads "hit me now"
+  // Inner gonidia (germ cells that become daughter colonies)
+  ctx.fillStyle = `rgba(80, 200, 100, ${(0.35 + 0.4 * corePulse).toFixed(3)})`;
+  for (let i = 0; i < 4; i++) {
+    const a = (i / 4) * Math.PI * 2 + t * 0.018;
+    const px = qx + Math.cos(a) * qr * 0.32;
+    const py = qy + Math.sin(a) * qr * 0.32;
+    ctx.beginPath();
+    ctx.arc(px, py, 4 + corePulse * 1.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // Vulnerability ring once daughter colonies are dead — pulses red
   if (h.drones.length === 0) {
     const ringPulse = 0.5 + 0.5 * Math.sin(t * 0.18);
     ctx.strokeStyle = `rgba(255, 70, 60, ${ringPulse.toFixed(3)})`;
@@ -1246,8 +1264,16 @@ function drawHiveQueen(ctx: CanvasRenderingContext2D, world: World): void {
   }
 }
 
-/* ─── Mirror ──────────────────────────────────────────────────────── */
+/* ─── Amoeba (was Mirror) ─────────────────────────────────────────── */
 
+/**
+ * Amoeboid mimic — wobbling pseudopod-edged blob that took on the
+ * player's absorbed-shape signature when it engulfed your traits.
+ * Same bell-perimeter morph (mouths/stingers/membranes alter the
+ * silhouette), but with extra perimeter wobble so it reads as a
+ * rippling protozoan rather than a static bell. Visible nucleus +
+ * a few inner organelle dots sell the cellular look.
+ */
 function drawMirror(ctx: CanvasRenderingContext2D, world: World): void {
   const m = world.mirror;
   if (!m) return;
@@ -1256,20 +1282,19 @@ function drawMirror(ctx: CanvasRenderingContext2D, world: World): void {
   const y = m.body.y ?? 0;
   const r = m.body.radius;
 
-  // Threat halo — magenta/violet so the mirror reads distinct from
-  // the cyan player bell.
+  // Threat halo — purple-pink protoplasm glow.
   const halo = ctx.createRadialGradient(x, y, r * 0.4, x, y, r * 2.6);
-  halo.addColorStop(0, "rgba(220, 100, 220, 0.35)");
-  halo.addColorStop(1, "rgba(220, 100, 220, 0)");
+  halo.addColorStop(0, "rgba(190, 110, 200, 0.32)");
+  halo.addColorStop(1, "rgba(190, 110, 200, 0)");
   ctx.fillStyle = halo;
   ctx.beginPath();
   ctx.arc(x, y, r * 2.6, 0, Math.PI * 2);
   ctx.fill();
 
-  // Bell shape — same parametric perimeter as the player's bell, but
-  // morphed by the mirror's own absorbed dict. Tinted magenta so the
-  // player can tell it's a copy, not their own.
-  const N = 36;
+  // Bell shape — same parametric perimeter as the player's bell,
+  // morphed by the mirror's own absorbed dict + extra protoplasmic
+  // wobble for the amoeba feel. Pseudopods extrude irregularly.
+  const N = 48;
   const stingers = m.mirroredAbsorbed.stinger ?? 0;
   const mouths = m.mirroredAbsorbed.mouth ?? 0;
   const membranes = m.mirroredAbsorbed.membrane ?? 0;
@@ -1277,10 +1302,13 @@ function drawMirror(ctx: CanvasRenderingContext2D, world: World): void {
   for (let i = 0; i < N; i++) {
     const a = (i / N) * Math.PI * 2;
     let rr = r;
-    rr += Math.sin(a * 5 + t * 0.05) * r * 0.05;
+    // Protoplasmic wobble — multiple sin layers for organic ripple
+    rr += Math.sin(a * 5 + t * 0.05) * r * 0.06;
+    rr += Math.sin(a * 3 - t * 0.03) * r * 0.05;
+    // Slow pseudopod bulges — random extrusions that drift
+    rr += Math.sin(a * 2 + t * 0.018 + m.hueShift * 0.01) * r * 0.10;
     if (membranes > 0) rr += Math.sin(a * (3 + membranes)) * r * 0.07;
     if (mouths > 0) rr += Math.cos(a * (2 + mouths)) * r * 0.06;
-    // Stinger spikes
     if (stingers > 0) {
       for (let s = 0; s < stingers; s++) {
         const sa = -Math.PI + ((s + 0.5) / stingers) * Math.PI;
@@ -1298,57 +1326,77 @@ function drawMirror(ctx: CanvasRenderingContext2D, world: World): void {
     else ctx.lineTo(px, py);
   }
   ctx.closePath();
-  // Magenta gradient fill for distinction
+  // Cytoplasm gradient — pale pink → deep magenta core
   const fillGrad = ctx.createRadialGradient(x, y, 0, x, y, r);
-  fillGrad.addColorStop(0, "rgba(255, 130, 220, 0.9)");
-  fillGrad.addColorStop(0.6, "rgba(180, 70, 200, 0.85)");
-  fillGrad.addColorStop(1, "rgba(110, 30, 140, 0.95)");
+  fillGrad.addColorStop(0, "rgba(255, 200, 230, 0.92)");
+  fillGrad.addColorStop(0.55, "rgba(200, 100, 200, 0.85)");
+  fillGrad.addColorStop(1, "rgba(120, 50, 150, 0.95)");
   ctx.fillStyle = fillGrad;
   ctx.fill();
-  ctx.strokeStyle = "rgba(255, 200, 240, 0.55)";
+  ctx.strokeStyle = "rgba(80, 30, 100, 0.6)";
   ctx.lineWidth = 1.6;
   ctx.stroke();
 
-  // Glowing core — pulses red when low health (visceral signal)
+  // Internal organelles — small dark dots adrift in the cytoplasm.
+  // 4-6 organelles, each on its own slow drift path.
+  const orgN = 5;
+  ctx.fillStyle = "rgba(80, 30, 110, 0.55)";
+  for (let i = 0; i < orgN; i++) {
+    const a = (i / orgN) * Math.PI * 2 + t * 0.012 + i * 0.7;
+    const orbR = r * 0.5;
+    const ox = x + Math.cos(a) * orbR;
+    const oy = y + Math.sin(a) * orbR;
+    ctx.beginPath();
+    ctx.arc(ox, oy, 2.2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Nucleus — central pulsing core. Goes red when low HP for a
+  // visceral "I'm hurt" signal.
   const hpFrac = Math.max(0, (m.body.health ?? 0) / m.maxHealth);
+  const corePulse = 0.7 + 0.3 * Math.sin(t * 0.07);
   const coreColor =
     hpFrac > 0.5
-      ? "rgba(255, 220, 255, 0.85)"
+      ? `rgba(255, 220, 255, ${(0.85 * corePulse).toFixed(3)})`
       : hpFrac > 0.2
-      ? "rgba(255, 180, 200, 0.85)"
-      : "rgba(255, 80, 80, 0.95)";
+      ? `rgba(255, 180, 200, ${(0.85 * corePulse).toFixed(3)})`
+      : `rgba(255, 80, 80, ${(0.95 * corePulse).toFixed(3)})`;
   ctx.fillStyle = coreColor;
   ctx.beginPath();
-  ctx.arc(x, y, r * 0.32, 0, Math.PI * 2);
+  ctx.arc(x, y, r * (0.30 + 0.05 * corePulse), 0, Math.PI * 2);
   ctx.fill();
+  // Nuclear membrane outline
+  ctx.strokeStyle = "rgba(60, 20, 80, 0.75)";
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  ctx.arc(x, y, r * 0.32, 0, Math.PI * 2);
+  ctx.stroke();
 }
 
 /**
- * Centipede — *Scutigera coleoptrata* (house centipede). Long flat
- * tan ribbon body with three dark longitudinal stripes, very long
- * banded legs that fan outward from each body joint and grow longer
- * toward the rear, banded antennae at the head and banded cerci at
- * the tail. Body is drawn as a single continuous tapered shape, not
- * a chain of visible segment balls.
+ * Spirochete — long bacterial mimic with a coiled body, flagella
+ * fanning out along its length, axial filaments that propel it.
+ * Same body chain physics as before, but the palette and visual
+ * vocabulary now read as a microbe instead of a house centipede.
  */
 const CENTIPEDE_PALETTE = {
-  bodyPale: "#d8c896",     // pale tan body
-  bodyMid: "#a8946a",      // mid tone underside
-  bodyShade: "#766239",    // shaded edge
-  stripeDark: "#2a1f10",   // longitudinal dark brown stripes
-  legBandPale: "#e8dcb6",  // light leg band
-  legBandDark: "#2a1f10",  // dark leg band
-  legShade: "#9a8050",     // leg shaded/proximal
-  antennaPale: "#cebd8c",
-  antennaDark: "#2a1f10",
-  cerciPale: "#cebd8c",
-  cerciDark: "#2a1f10",
-  mandible: "#5a3a18",
-  mandibleTip: "#1f120a",
-  eyeRim: "#0a0604",
-  eyeShine: "#1a1208",     // small black bead eyes (not glowing)
-  haloFill: "rgba(180, 150, 90, 0.20)",
-  haloFade: "rgba(180, 150, 90, 0)",
+  bodyPale: "#e0d8a8",     // pale yellow-green protoplasm
+  bodyMid: "#9aa66a",      // chartreuse mid-tone
+  bodyShade: "#5d6a3a",    // shaded edge — bacterial green
+  stripeDark: "#1d2812",   // longitudinal dark stripes (axial filaments)
+  legBandPale: "#f0e8c8",  // light flagella segment
+  legBandDark: "#3a3018",  // dark flagella segment
+  legShade: "#a89a64",
+  antennaPale: "#dcd2a4",  // anterior flagella
+  antennaDark: "#3a3018",
+  cerciPale: "#dcd2a4",
+  cerciDark: "#3a3018",
+  mandible: "#6a5a30",     // soft jaw — bacterial appendage
+  mandibleTip: "#2a2010",
+  eyeRim: "#0a0a04",
+  eyeShine: "#1a1810",
+  haloFill: "rgba(180, 200, 110, 0.22)",
+  haloFade: "rgba(180, 200, 110, 0)",
 };
 
 function drawCentipede(ctx: CanvasRenderingContext2D, world: World): void {
@@ -2399,17 +2447,17 @@ export function drawBossHealthBar(
     hp = Math.max(0, c.head.health ?? 0);
     maxHp = Math.max(1, c.maxHealth);
     enraged = c.enragedFlashed;
-    label = `CENTIPEDE · LV ${c.level}${c.cycleRound > 0 ? ` · CYCLE ${c.cycleRound}` : ""}`;
+    label = `SPIROCHETE · LV ${c.level}${c.cycleRound > 0 ? ` · CYCLE ${c.cycleRound}` : ""}`;
   } else if (world.hiveQueen) {
     const h = world.hiveQueen;
     hp = Math.max(0, h.body.health ?? 0);
     maxHp = Math.max(1, h.maxHealth);
-    label = `HIVE QUEEN · LV ${h.level}${h.cycleRound > 0 ? ` · CYCLE ${h.cycleRound}` : ""}${h.drones.length > 0 ? ` · ${h.drones.length} DRONE${h.drones.length === 1 ? "" : "S"}` : " · EXPOSED"}`;
+    label = `VOLVOX · LV ${h.level}${h.cycleRound > 0 ? ` · CYCLE ${h.cycleRound}` : ""}${h.drones.length > 0 ? ` · ${h.drones.length} GONIDIA` : " · EXPOSED"}`;
   } else if (world.mirror) {
     const m = world.mirror;
     hp = Math.max(0, m.body.health ?? 0);
     maxHp = Math.max(1, m.maxHealth);
-    label = `MIRROR · LV ${m.level}${m.cycleRound > 0 ? ` · CYCLE ${m.cycleRound}` : ""}`;
+    label = `AMOEBA · LV ${m.level}${m.cycleRound > 0 ? ` · CYCLE ${m.cycleRound}` : ""}`;
   } else {
     return;
   }
