@@ -1048,25 +1048,31 @@ export function drawPredators(ctx: CanvasRenderingContext2D, world: World): void
 }
 
 /**
- * Centipede — chitinous brown-olive predator with segmented body,
- * articulated legs along each segment, and a distinct armored head.
- * Drawn back-to-front so the head sits on top of its own body.
+ * Centipede — *Scutigera coleoptrata* (house centipede). Long flat
+ * tan ribbon body with three dark longitudinal stripes, very long
+ * banded legs that fan outward from each body joint and grow longer
+ * toward the rear, banded antennae at the head and banded cerci at
+ * the tail. Body is drawn as a single continuous tapered shape, not
+ * a chain of visible segment balls.
  */
 const CENTIPEDE_PALETTE = {
-  bodyTop: "#8a8a3a",      // olive top highlight
-  bodyMid: "#5a6024",      // body fill
-  bodyDark: "#2e3010",     // shaded underside / segment seams
-  segRim: "#1c1d08",       // dark exoskeleton edge
-  legColor: "#3e4416",     // limbs
-  legShine: "#7e8a3a",     // limb highlight
-  mandible: "#3a1d08",     // dark blood-brown jaws
-  mandibleTip: "#1a0a04",
-  antenna: "#2a3010",
-  eyeRim: "#0d0904",
-  eyeShine: "#f5d65a",     // amber compound eye
-  haloFill: "rgba(140, 150, 60, 0.32)",
-  haloFade: "rgba(140, 150, 60, 0)",
-  toothPale: "#d8c878",
+  bodyPale: "#d8c896",     // pale tan body
+  bodyMid: "#a8946a",      // mid tone underside
+  bodyShade: "#766239",    // shaded edge
+  stripeDark: "#2a1f10",   // longitudinal dark brown stripes
+  legBandPale: "#e8dcb6",  // light leg band
+  legBandDark: "#2a1f10",  // dark leg band
+  legShade: "#9a8050",     // leg shaded/proximal
+  antennaPale: "#cebd8c",
+  antennaDark: "#2a1f10",
+  cerciPale: "#cebd8c",
+  cerciDark: "#2a1f10",
+  mandible: "#5a3a18",
+  mandibleTip: "#1f120a",
+  eyeRim: "#0a0604",
+  eyeShine: "#1a1208",     // small black bead eyes (not glowing)
+  haloFill: "rgba(180, 150, 90, 0.20)",
+  haloFade: "rgba(180, 150, 90, 0)",
 };
 
 function drawCentipede(ctx: CanvasRenderingContext2D, world: World): void {
@@ -1077,210 +1083,361 @@ function drawCentipede(ctx: CanvasRenderingContext2D, world: World): void {
   const segs = c.segments;
   const t = world.tickN;
   const allBodies = [head, ...segs];
+  const hr = head.radius;
+  // Body half-thickness — much slimmer than original to read as a ribbon.
+  const bodyHalfWidth = hr * 0.48;
 
-  // ── Soft warm-green halo under the whole creature ────────────────
+  // ── Soft warm halo under the whole creature ─────────────────────
   for (const b of allBodies) {
     const x = b.x ?? 0;
     const y = b.y ?? 0;
-    const halo = ctx.createRadialGradient(x, y, b.radius * 0.4, x, y, b.radius * 2.4);
+    const halo = ctx.createRadialGradient(x, y, b.radius * 0.4, x, y, b.radius * 2.0);
     halo.addColorStop(0, P.haloFill);
     halo.addColorStop(1, P.haloFade);
     ctx.fillStyle = halo;
     ctx.beginPath();
-    ctx.arc(x, y, b.radius * 2.4, 0, Math.PI * 2);
+    ctx.arc(x, y, b.radius * 2.0, 0, Math.PI * 2);
     ctx.fill();
   }
 
-  // ── Connective body trunk — smoothed dark spine ─────────────────
-  if (segs.length > 0) {
-    ctx.beginPath();
-    ctx.moveTo(head.x ?? 0, head.y ?? 0);
-    for (let i = 0; i < allBodies.length - 1; i++) {
-      const a = allBodies[i];
-      const b = allBodies[i + 1];
-      const mx = ((a.x ?? 0) + (b.x ?? 0)) / 2;
-      const my = ((a.y ?? 0) + (b.y ?? 0)) / 2;
-      ctx.quadraticCurveTo(a.x ?? 0, a.y ?? 0, mx, my);
+  // ── Build sample points along the spine via Catmull-Rom smoothing
+  // so the body is a flowing curve, not visible balls. We sample N
+  // points; each carries position, tangent, normal, and t-along-body.
+  type SamplePoint = { x: number; y: number; tx: number; ty: number; nx: number; ny: number; u: number };
+  const samples: SamplePoint[] = [];
+  const SAMPLES_PER_SEG = 6;
+  for (let i = 0; i < allBodies.length - 1; i++) {
+    const a = allBodies[i];
+    const b = allBodies[i + 1];
+    const ax = a.x ?? 0;
+    const ay = a.y ?? 0;
+    const bx = b.x ?? 0;
+    const by = b.y ?? 0;
+    const steps = i === allBodies.length - 2 ? SAMPLES_PER_SEG : SAMPLES_PER_SEG - 1;
+    for (let s = 0; s < steps; s++) {
+      const f = s / SAMPLES_PER_SEG;
+      const x = ax + (bx - ax) * f;
+      const y = ay + (by - ay) * f;
+      let tx = bx - ax;
+      let ty = by - ay;
+      const tlen = Math.hypot(tx, ty) || 1;
+      tx /= tlen;
+      ty /= tlen;
+      const nx = -ty;
+      const ny = tx;
+      const u = (i + f) / Math.max(1, allBodies.length - 1);
+      samples.push({ x, y, tx, ty, nx, ny, u });
     }
+  }
+  // Push the very last point (tail tip).
+  if (allBodies.length > 1) {
     const last = allBodies[allBodies.length - 1];
-    ctx.lineTo(last.x ?? 0, last.y ?? 0);
-    ctx.strokeStyle = P.bodyDark;
-    ctx.lineWidth = head.radius * 1.5;
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-    ctx.stroke();
-    // Highlight ribbon on top of trunk for sheen
-    ctx.strokeStyle = P.bodyMid;
-    ctx.lineWidth = head.radius * 1.05;
-    ctx.stroke();
+    const prev = allBodies[allBodies.length - 2];
+    let tx = (last.x ?? 0) - (prev.x ?? 0);
+    let ty = (last.y ?? 0) - (prev.y ?? 0);
+    const tlen = Math.hypot(tx, ty) || 1;
+    tx /= tlen;
+    ty /= tlen;
+    samples.push({
+      x: last.x ?? 0,
+      y: last.y ?? 0,
+      tx,
+      ty,
+      nx: -ty,
+      ny: tx,
+      u: 1,
+    });
   }
 
-  // ── Segments — back to front so head sits on top ────────────────
-  for (let i = segs.length - 1; i >= 0; i--) {
-    const s = segs[i];
-    const x = s.x ?? 0;
-    const y = s.y ?? 0;
-    const r = s.radius;
-    // Per-segment heading: vector toward next-forward neighbor.
-    const next = i === 0 ? head : segs[i - 1];
-    const ax = (next.x ?? 0) - x;
-    const ay = (next.y ?? 0) - y;
-    const segAngle = Math.atan2(ay, ax) || 0;
+  // Width at body position u: gentle taper to the tail (60% width at u=1).
+  const widthAt = (u: number) => bodyHalfWidth * (1 - 0.4 * u);
 
-    ctx.save();
-    ctx.translate(x, y);
-    ctx.rotate(segAngle);
-
-    // Legs — pair on each side, animated walking wave
-    const legPhase = t * 0.18 + i * 1.1;
-    ctx.strokeStyle = P.legColor;
-    ctx.lineWidth = Math.max(1.4, r * 0.18);
-    ctx.lineCap = "round";
+  // ── Legs — drawn FIRST (behind the body). Many pairs along the body,
+  // each pair longer toward the rear, with white/dark band pattern
+  // and a knee bend.
+  const LEG_PAIRS = Math.min(samples.length - 2, 14);
+  ctx.lineCap = "round";
+  for (let i = 1; i <= LEG_PAIRS; i++) {
+    const idx = Math.round(((i - 0.5) / LEG_PAIRS) * (samples.length - 2));
+    const sp = samples[idx];
+    if (!sp) continue;
+    // Length grows from 1.6× hr at the front to 3.0× hr at the rear.
+    const lenScale = 1.6 + sp.u * 1.4;
+    const len = hr * lenScale;
+    // Walking wave — opposite phase per side; pairs offset.
+    const phase = t * 0.16 + i * 0.5;
     for (const side of [-1, 1]) {
-      for (const off of [-r * 0.45, r * 0.45]) {
-        const wag = Math.sin(legPhase + off * 0.05) * 0.5;
+      const wag = Math.sin(phase + side * 1.1) * 0.18;
+      // Kneed leg: out perpendicular, then bent slightly back toward tail.
+      const baseX = sp.x + sp.nx * side * widthAt(sp.u) * 0.95;
+      const baseY = sp.y + sp.ny * side * widthAt(sp.u) * 0.95;
+      const kneeOut = (0.55 + wag) * len;
+      const kneeBack = -0.15 * len; // bend tucks back along body
+      const kx = baseX + sp.nx * side * kneeOut + sp.tx * kneeBack;
+      const ky = baseY + sp.ny * side * kneeOut + sp.ty * kneeBack;
+      const tipOut = (1.0 + wag * 0.6) * len;
+      const tipBack = -0.35 * len;
+      const tipX = baseX + sp.nx * side * tipOut + sp.tx * tipBack;
+      const tipY = baseY + sp.ny * side * tipOut + sp.ty * tipBack;
+
+      // Stroke whole leg as a thin pale base, then overlay banded segments.
+      ctx.strokeStyle = P.legShade;
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.moveTo(baseX, baseY);
+      ctx.quadraticCurveTo(kx, ky, tipX, tipY);
+      ctx.stroke();
+
+      // Banding: alternate pale/dark short segments along the curve.
+      const BANDS = 6;
+      for (let bi = 0; bi < BANDS; bi++) {
+        const f0 = bi / BANDS;
+        const f1 = (bi + 1) / BANDS;
+        // Quadratic-bezier point sampler.
+        const sample = (f: number) => {
+          const omf = 1 - f;
+          return {
+            x: omf * omf * baseX + 2 * omf * f * kx + f * f * tipX,
+            y: omf * omf * baseY + 2 * omf * f * ky + f * f * tipY,
+          };
+        };
+        const p0 = sample(f0);
+        const p1 = sample(f1);
+        ctx.strokeStyle = bi % 2 === 0 ? P.legBandPale : P.legBandDark;
+        ctx.lineWidth = 1.4 - f0 * 0.4; // taper toward tip
         ctx.beginPath();
-        ctx.moveTo(off * 0.4, side * r * 0.35);
-        ctx.quadraticCurveTo(
-          off * 0.6 + side * 0.1,
-          side * (r * 1.1 + wag * 4),
-          off * 0.7 + side * 0.4,
-          side * (r * 1.55 + wag * 3),
-        );
+        ctx.moveTo(p0.x, p0.y);
+        ctx.lineTo(p1.x, p1.y);
         ctx.stroke();
       }
     }
-
-    // Body shell — vertical gradient (top lighter, bottom shaded)
-    const grad = ctx.createLinearGradient(0, -r, 0, r);
-    grad.addColorStop(0, P.bodyTop);
-    grad.addColorStop(0.55, P.bodyMid);
-    grad.addColorStop(1, P.bodyDark);
-    ctx.fillStyle = grad;
-    ctx.beginPath();
-    // Slightly elongated capsule along travel direction
-    ctx.ellipse(0, 0, r * 1.05, r * 0.92, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = P.segRim;
-    ctx.lineWidth = 1.4;
-    ctx.stroke();
-    // Spine ridge — thin lighter line down the middle of each segment
-    ctx.strokeStyle = P.bodyTop;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(-r * 0.6, 0);
-    ctx.lineTo(r * 0.6, 0);
-    ctx.stroke();
-    // Specular highlight
-    ctx.fillStyle = "rgba(255,255,210,0.18)";
-    ctx.beginPath();
-    ctx.ellipse(0, -r * 0.35, r * 0.6, r * 0.22, 0, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.restore();
   }
 
-  // ── Head — armored carapace, antennae, mandibles ────────────────
+  // ── Body ribbon — build outer outline using normals at each sample.
+  if (samples.length >= 2) {
+    // Outer (left) edge forward, then outer (right) edge back.
+    ctx.beginPath();
+    {
+      const s0 = samples[0];
+      const w0 = widthAt(s0.u);
+      ctx.moveTo(s0.x + s0.nx * w0, s0.y + s0.ny * w0);
+    }
+    for (let i = 1; i < samples.length; i++) {
+      const sp = samples[i];
+      const w = widthAt(sp.u);
+      ctx.lineTo(sp.x + sp.nx * w, sp.y + sp.ny * w);
+    }
+    for (let i = samples.length - 1; i >= 0; i--) {
+      const sp = samples[i];
+      const w = widthAt(sp.u);
+      ctx.lineTo(sp.x - sp.nx * w, sp.y - sp.ny * w);
+    }
+    ctx.closePath();
+    // Body fill — soft top-light gradient is approximated by a flat
+    // pale tan with a darker shade band, applied via two overlapping
+    // strokes after the fill.
+    ctx.fillStyle = P.bodyPale;
+    ctx.fill();
+    // Underside shadow band (lower half along normal): redraw narrower
+    // shape using offset normals to give a 3D look.
+    ctx.beginPath();
+    {
+      const s0 = samples[0];
+      const w0 = widthAt(s0.u);
+      ctx.moveTo(s0.x + s0.nx * w0 * 0.05, s0.y + s0.ny * w0 * 0.05);
+    }
+    for (let i = 1; i < samples.length; i++) {
+      const sp = samples[i];
+      const w = widthAt(sp.u);
+      ctx.lineTo(sp.x + sp.nx * w * 0.05, sp.y + sp.ny * w * 0.05);
+    }
+    for (let i = samples.length - 1; i >= 0; i--) {
+      const sp = samples[i];
+      const w = widthAt(sp.u);
+      ctx.lineTo(sp.x - sp.nx * w, sp.y - sp.ny * w);
+    }
+    ctx.closePath();
+    ctx.fillStyle = P.bodyMid;
+    ctx.globalAlpha = 0.55;
+    ctx.fill();
+    ctx.globalAlpha = 1;
+
+    // Outline — dark exoskeleton edge.
+    ctx.beginPath();
+    {
+      const s0 = samples[0];
+      const w0 = widthAt(s0.u);
+      ctx.moveTo(s0.x + s0.nx * w0, s0.y + s0.ny * w0);
+    }
+    for (let i = 1; i < samples.length; i++) {
+      const sp = samples[i];
+      const w = widthAt(sp.u);
+      ctx.lineTo(sp.x + sp.nx * w, sp.y + sp.ny * w);
+    }
+    for (let i = samples.length - 1; i >= 0; i--) {
+      const sp = samples[i];
+      const w = widthAt(sp.u);
+      ctx.lineTo(sp.x - sp.nx * w, sp.y - sp.ny * w);
+    }
+    ctx.closePath();
+    ctx.strokeStyle = P.bodyShade;
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+
+    // Three longitudinal stripes — center, +0.45 and -0.45 of half-width.
+    // Stroke a thin line through the samples at each offset.
+    const stripes = [-0.55, 0, 0.55];
+    ctx.strokeStyle = P.stripeDark;
+    ctx.lineWidth = 1.5;
+    for (const off of stripes) {
+      ctx.beginPath();
+      for (let i = 0; i < samples.length; i++) {
+        const sp = samples[i];
+        const w = widthAt(sp.u);
+        const x = sp.x + sp.nx * (w * off);
+        const y = sp.y + sp.ny * (w * off);
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+    }
+
+    // Faint segment-seam tick marks across the body — perpendicular
+    // dashes at evenly spaced points.
+    ctx.strokeStyle = "rgba(40, 25, 12, 0.35)";
+    ctx.lineWidth = 1;
+    const SEAMS = 14;
+    for (let i = 1; i < SEAMS; i++) {
+      const f = i / SEAMS;
+      const idx = Math.min(samples.length - 1, Math.floor(f * (samples.length - 1)));
+      const sp = samples[idx];
+      const w = widthAt(sp.u) * 0.9;
+      ctx.beginPath();
+      ctx.moveTo(sp.x + sp.nx * w, sp.y + sp.ny * w);
+      ctx.lineTo(sp.x - sp.nx * w, sp.y - sp.ny * w);
+      ctx.stroke();
+    }
+  }
+
+  // ── Cerci — long banded tail filaments at the rear ──────────────
+  if (samples.length >= 2) {
+    const tail = samples[samples.length - 1];
+    const tailW = widthAt(tail.u);
+    const cerciLen = hr * 2.6;
+    for (const side of [-1, 1]) {
+      const wag = Math.sin(t * 0.10 + side * 0.7) * 0.15;
+      const baseX = tail.x + tail.nx * side * tailW * 0.55 - tail.tx * tailW * 0.4;
+      const baseY = tail.y + tail.ny * side * tailW * 0.55 - tail.ty * tailW * 0.4;
+      const ctrlX = baseX - tail.tx * cerciLen * 0.6 + tail.nx * side * cerciLen * (0.35 + wag);
+      const ctrlY = baseY - tail.ty * cerciLen * 0.6 + tail.ny * side * cerciLen * (0.35 + wag);
+      const tipX = baseX - tail.tx * cerciLen * 1.0 + tail.nx * side * cerciLen * (0.55 + wag * 1.2);
+      const tipY = baseY - tail.ty * cerciLen * 1.0 + tail.ny * side * cerciLen * (0.55 + wag * 1.2);
+      // Banded segments
+      const BANDS = 8;
+      for (let bi = 0; bi < BANDS; bi++) {
+        const f0 = bi / BANDS;
+        const f1 = (bi + 1) / BANDS;
+        const sample = (f: number) => {
+          const omf = 1 - f;
+          return {
+            x: omf * omf * baseX + 2 * omf * f * ctrlX + f * f * tipX,
+            y: omf * omf * baseY + 2 * omf * f * ctrlY + f * f * tipY,
+          };
+        };
+        const p0 = sample(f0);
+        const p1 = sample(f1);
+        ctx.strokeStyle = bi % 2 === 0 ? P.cerciPale : P.cerciDark;
+        ctx.lineWidth = 1.6 - f0 * 0.6;
+        ctx.beginPath();
+        ctx.moveTo(p0.x, p0.y);
+        ctx.lineTo(p1.x, p1.y);
+        ctx.stroke();
+      }
+    }
+  }
+
+  // ── Head — armored teardrop with antennae + mandibles + bead eyes
   const hx = head.x ?? 0;
   const hy = head.y ?? 0;
-  const hr = head.radius;
   const angle = Math.atan2(head.vy ?? 0, head.vx ?? 0) || 0;
 
   ctx.save();
   ctx.translate(hx, hy);
   ctx.rotate(angle);
 
-  // Antennae — twitching wisps in front of the head
-  ctx.strokeStyle = P.antenna;
-  ctx.lineWidth = 1.6;
-  ctx.lineCap = "round";
+  // Antennae — long banded waving filaments forward
+  const antLen = hr * 3.2;
   for (const side of [-1, 1]) {
-    const tw = Math.sin(t * 0.12 + side) * 0.4;
-    ctx.beginPath();
-    ctx.moveTo(hr * 0.4, side * hr * 0.4);
-    ctx.quadraticCurveTo(
-      hr * 1.4,
-      side * (hr * 0.9 + tw * 2),
-      hr * 1.95,
-      side * (hr * 0.4 + tw * 4),
-    );
-    ctx.stroke();
+    const tw = Math.sin(t * 0.10 + side * 0.9) * 0.4;
+    const baseX = hr * 0.35;
+    const baseY = side * hr * 0.35;
+    const ctrlX = hr * 1.6;
+    const ctrlY = side * (hr * 1.0 + tw * 4);
+    const tipX = hr * 0.35 + antLen;
+    const tipY = side * (hr * 0.4 + tw * 8);
+    const BANDS = 10;
+    for (let bi = 0; bi < BANDS; bi++) {
+      const f0 = bi / BANDS;
+      const f1 = (bi + 1) / BANDS;
+      const sample = (f: number) => {
+        const omf = 1 - f;
+        return {
+          x: omf * omf * baseX + 2 * omf * f * ctrlX + f * f * tipX,
+          y: omf * omf * baseY + 2 * omf * f * ctrlY + f * f * tipY,
+        };
+      };
+      const p0 = sample(f0);
+      const p1 = sample(f1);
+      ctx.strokeStyle = bi % 2 === 0 ? P.antennaPale : P.antennaDark;
+      ctx.lineWidth = 1.4 - f0 * 0.7;
+      ctx.beginPath();
+      ctx.moveTo(p0.x, p0.y);
+      ctx.lineTo(p1.x, p1.y);
+      ctx.stroke();
+    }
   }
 
-  // Head shell — domed gradient
-  const headGrad = ctx.createLinearGradient(0, -hr, 0, hr);
-  headGrad.addColorStop(0, P.bodyTop);
-  headGrad.addColorStop(0.55, P.bodyMid);
-  headGrad.addColorStop(1, P.bodyDark);
-  ctx.fillStyle = headGrad;
+  // Head shell — pale tan teardrop
+  ctx.fillStyle = P.bodyPale;
   ctx.beginPath();
-  ctx.ellipse(0, 0, hr * 1.08, hr * 0.9, 0, 0, Math.PI * 2);
+  ctx.ellipse(hr * 0.1, 0, hr * 0.95, hr * 0.7, 0, 0, Math.PI * 2);
   ctx.fill();
-  ctx.strokeStyle = P.segRim;
-  ctx.lineWidth = 1.8;
+  ctx.strokeStyle = P.bodyShade;
+  ctx.lineWidth = 1.2;
   ctx.stroke();
-
-  // Plate seams across the head — three vertical creases
-  ctx.strokeStyle = P.bodyDark;
-  ctx.lineWidth = 1;
-  for (const off of [-hr * 0.3, 0, hr * 0.3]) {
+  // Two head stripes (continuation of the body lines)
+  ctx.strokeStyle = P.stripeDark;
+  ctx.lineWidth = 1.2;
+  for (const off of [-hr * 0.3, hr * 0.3]) {
     ctx.beginPath();
-    ctx.moveTo(off, -hr * 0.65);
-    ctx.lineTo(off, hr * 0.65);
+    ctx.moveTo(-hr * 0.35, off);
+    ctx.lineTo(hr * 0.7, off * 0.85);
     ctx.stroke();
   }
 
-  // Mandibles — curved chitin scythes
+  // Mandibles — short forward-curving fangs (much smaller than before)
   for (const side of [-1, 1]) {
-    const grd = ctx.createLinearGradient(hr * 0.6, 0, hr * 1.4, 0);
+    const grd = ctx.createLinearGradient(hr * 0.7, 0, hr * 1.15, 0);
     grd.addColorStop(0, P.mandible);
     grd.addColorStop(1, P.mandibleTip);
     ctx.fillStyle = grd;
     ctx.beginPath();
-    ctx.moveTo(hr * 0.55, hr * 0.32 * side);
-    ctx.quadraticCurveTo(hr * 1.15, hr * 0.55 * side, hr * 1.45, hr * 0.18 * side);
-    ctx.quadraticCurveTo(hr * 1.05, hr * 0.32 * side, hr * 0.7, hr * 0.18 * side);
-    ctx.closePath();
-    ctx.fill();
-    ctx.strokeStyle = "rgba(0,0,0,0.5)";
-    ctx.lineWidth = 1;
-    ctx.stroke();
-  }
-
-  // Inner small teeth between the mandibles
-  ctx.fillStyle = P.toothPale;
-  for (let i = -1; i <= 1; i++) {
-    const ty = i * hr * 0.18;
-    ctx.beginPath();
-    ctx.moveTo(hr * 0.55, ty);
-    ctx.lineTo(hr * 0.92, ty - hr * 0.07);
-    ctx.lineTo(hr * 0.92, ty + hr * 0.07);
+    ctx.moveTo(hr * 0.7, side * hr * 0.18);
+    ctx.quadraticCurveTo(hr * 1.0, side * hr * 0.32, hr * 1.15, side * hr * 0.08);
+    ctx.quadraticCurveTo(hr * 0.95, side * hr * 0.2, hr * 0.78, side * hr * 0.1);
     ctx.closePath();
     ctx.fill();
   }
 
-  // Compound eyes — amber with dark rim, one each side near front
-  for (const ey of [-hr * 0.42, hr * 0.42]) {
-    // socket
-    ctx.fillStyle = P.eyeRim;
-    ctx.beginPath();
-    ctx.arc(hr * 0.18, ey, hr * 0.22, 0, Math.PI * 2);
-    ctx.fill();
-    // amber lens
+  // Tiny black bead eyes (house centipedes have small simple eyes)
+  for (const ey of [-hr * 0.3, hr * 0.3]) {
     ctx.fillStyle = P.eyeShine;
     ctx.beginPath();
-    ctx.arc(hr * 0.18, ey, hr * 0.16, 0, Math.PI * 2);
+    ctx.arc(hr * 0.05, ey, hr * 0.08, 0, Math.PI * 2);
     ctx.fill();
-    // catchlight
-    ctx.fillStyle = "rgba(255,255,255,0.85)";
+    ctx.fillStyle = "rgba(255,255,255,0.6)";
     ctx.beginPath();
-    ctx.arc(hr * 0.22, ey - hr * 0.04, hr * 0.05, 0, Math.PI * 2);
-    ctx.fill();
-    // pupil
-    ctx.fillStyle = "rgba(0,0,0,0.6)";
-    const pulse = 0.05 + 0.015 * Math.sin(t * 0.05);
-    ctx.beginPath();
-    ctx.arc(hr * 0.16, ey, hr * pulse, 0, Math.PI * 2);
+    ctx.arc(hr * 0.07, ey - hr * 0.025, hr * 0.025, 0, Math.PI * 2);
     ctx.fill();
   }
 
