@@ -12,6 +12,10 @@ concurrency:
 env:
   NODE_VERSION: "20"
   PNPM_VERSION: "10.28.0"
+  # Run JS-based GitHub Actions on Node 24 ahead of the Sept 2026 cut-off.
+  # GitHub will flip this default June 2 2026; opting in now silences the
+  # deprecation annotation and surfaces any incompat early.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
   lint:
