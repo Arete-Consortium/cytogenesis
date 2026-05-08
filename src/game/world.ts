@@ -1,5 +1,5 @@
 import * as d3 from "d3";
-import type { Body, Bond, Camera, NodeTypeId } from "./types";
+import type { Body, Bond, BossKind, Camera, NodeTypeId } from "./types";
 import { NODE_RADIUS } from "@/data/nodeTypes";
 import { rngFromSeed, type Rng } from "@/lib/rng";
 import { buildQuadtree, rangeQuery, type BodyQuadtree } from "./quadtree";
@@ -115,6 +115,8 @@ export type WorldEvent =
   | "telegraph"
   | "combo"
   | "killPred"
+  | "killBoss"
+  | "bossSpawn"
   | `trait:${string}`
   | `biome:${number}`
   | `evolve:${number}`
@@ -129,6 +131,29 @@ const COMBO_RADIUS_BONUS = 8;
 
 /** Captured-count milestones that trigger a biome flourish. */
 const BIOME_MILESTONES = [20, 40, 60];
+
+/** Boss tuning per biome (one per milestone). */
+const BOSS_KIND_BY_BIOME: Record<number, BossKind> = {
+  20: "swarmLord",
+  40: "tideMaw",
+  60: "abyssEye",
+};
+const BOSS_HEALTH: Record<BossKind, number> = {
+  swarmLord: 20,
+  tideMaw: 30,
+  abyssEye: 40,
+};
+const BOSS_RADIUS: Record<BossKind, number> = {
+  swarmLord: 22,
+  tideMaw: 32,
+  abyssEye: 28,
+};
+const BOSS_REWARD_TYPE: Record<BossKind, NodeTypeId> = {
+  swarmLord: "chloroplast", // regen
+  tideMaw: "membrane",      // armor
+  abyssEye: "mitochondrion", // cooldown
+};
+const BOSS_REWARD_AMOUNT = 5;
 
 /** Free-cell ecology tuning. */
 const ECOLOGY_INTERVAL_MS = 4000;
@@ -209,6 +234,8 @@ export class World {
   paused: boolean;
   /** 0 (surface) → 3 (depth 60). Darkens the bg gradient as you descend. */
   biomeStage: number;
+  /** Number of bosses killed this run — surfaced on the run summary. */
+  bossesDefeated: number;
   /** Wallclock at which the next chloroplast regen will fire. */
   private nextRegenAtMs: number;
   /** Wallclock at which the next ecology pass will fire. */
@@ -285,6 +312,7 @@ export class World {
     this.wallMs = 0;
     this.paused = false;
     this.biomeStage = 0;
+    this.bossesDefeated = 0;
     this.nextRegenAtMs = 0;
     this.nextEcologyAtMs = 4000;
     this.viewportWidth = 0;
@@ -649,8 +677,58 @@ export class World {
     const idx = this.predators.indexOf(p);
     if (idx >= 0) this.predators.splice(idx, 1);
     this.emitSparkle(p.x ?? 0, p.y ?? 0, "rgba(248, 113, 113,");
-    this.events.push("killPred");
-    this.addShake(p.variant === "brute" ? 9 : 5);
+    if (p.bossKind) {
+      // Boss death — bigger shake + reward + special event.
+      this.addShake(20);
+      this.events.push("killBoss");
+      this.bossesDefeated += 1;
+      const reward = BOSS_REWARD_TYPE[p.bossKind];
+      for (let i = 0; i < BOSS_REWARD_AMOUNT; i++) {
+        this.absorbed[reward] += 1;
+        this.totalAbsorbed += 1;
+      }
+      this.peakCaptured = Math.max(this.peakCaptured, this.totalAbsorbed);
+      this.traits = recomputeTraits(this.absorbed);
+    } else {
+      this.events.push("killPred");
+      this.addShake(p.variant === "brute" ? 9 : 5);
+    }
+  }
+
+  /**
+   * Spawn a boss for the given biome. Bosses go into this.predators
+   * (reusing AI + collision pipeline) but are tagged via bossKind so
+   * the render + death paths special-case them.
+   */
+  private spawnBoss(kind: BossKind): void {
+    const core = this.entityBodies[0];
+    const cx = core?.x ?? 0;
+    const cy = core?.y ?? 0;
+    // Pick a spawn point at safe distance on the arena edge.
+    const angle = this.rng.next() * Math.PI * 2;
+    const spawnDist = 600;
+    let bx = cx + Math.cos(angle) * spawnDist;
+    let by = cy + Math.sin(angle) * spawnDist;
+    const a = this.arenaHalf;
+    bx = Math.max(-a, Math.min(a, bx));
+    by = Math.max(-a, Math.min(a, by));
+    const radius = BOSS_RADIUS[kind];
+    const health = BOSS_HEALTH[kind];
+    this.predators.push({
+      id: newId(`boss-${kind}`),
+      type: "spore",
+      kind: "predator",
+      radius,
+      x: bx,
+      y: by,
+      vx: 0,
+      vy: 0,
+      variant: "brute", // reuse brute AI: slow + heavy hit
+      health,
+      bossKind: kind,
+    });
+    this.events.push("bossSpawn");
+    this.addShake(15);
   }
 
   /**
@@ -1162,6 +1240,9 @@ export class World {
         this.events.push(`biome:${t}` as WorldEvent);
         this.addShake(8);
         this.biomeStage = m + 1;
+        // Spawn the biome boss.
+        const bossKind = BOSS_KIND_BY_BIOME[t];
+        if (bossKind) this.spawnBoss(bossKind);
       }
     }
 

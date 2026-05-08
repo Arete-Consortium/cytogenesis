@@ -22,6 +22,7 @@ export interface Vec2 {
  * body is part of the player's entity graph or a free-floating cell.
  */
 export type PredatorVariant = "skirmisher" | "brute";
+export type BossKind = "swarmLord" | "tideMaw" | "abyssEye";
 
 export interface Body extends SimulationNodeDatum {
   id: string;
@@ -36,6 +37,8 @@ export interface Body extends SimulationNodeDatum {
   variant?: PredatorVariant;
   /** Predator-only: HP. Reaches ≤0 → killed. */
   health?: number;
+  /** Predator-only: marks this body as a boss with a specific personality. */
+  bossKind?: BossKind;
 }
 
 /** Camera transform — matches d3.zoomTransform shape (k, x, y). */

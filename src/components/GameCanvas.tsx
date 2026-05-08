@@ -460,6 +460,14 @@ export default function GameCanvas() {
           else if (ev === "killPred") {
             audio.hit();
           }
+          else if (ev === "bossSpawn") {
+            audio.telegraph();
+            queueToast("BOSS · INCOMING");
+          }
+          else if (ev === "killBoss") {
+            audio.transcend();
+            queueToast("BOSS DEFEATED");
+          }
         }
         world.events.length = 0;
       }

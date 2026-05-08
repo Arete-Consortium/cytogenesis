@@ -866,9 +866,247 @@ export function drawPredators(ctx: CanvasRenderingContext2D, world: World): void
   if (world.predators.length === 0) return;
   const t = world.tickN;
   for (const p of world.predators) {
-    if (p.variant === "brute") drawBrutePredator(ctx, p, t);
+    if (p.bossKind === "swarmLord") drawSwarmLord(ctx, p, t);
+    else if (p.bossKind === "tideMaw") drawTideMaw(ctx, p, t);
+    else if (p.bossKind === "abyssEye") drawAbyssEye(ctx, p, t);
+    else if (p.variant === "brute") drawBrutePredator(ctx, p, t);
     else drawSkirmisherPredator(ctx, p, t);
   }
+}
+
+/* ─── Bosses ─────────────────────────────────────────────────────── */
+
+/**
+ * Swarm Lord — depth 20. Large dark anglerfish with a cloud of
+ * orbiting smaller halos that simulate a swarm.
+ */
+function drawSwarmLord(
+  ctx: CanvasRenderingContext2D,
+  p: Body,
+  t: number,
+): void {
+  const T = currentTheme().predator;
+  const x = p.x ?? 0;
+  const y = p.y ?? 0;
+  const r = p.radius * 1.3;
+  const angle = Math.atan2(p.vy ?? 0, p.vx ?? 0) || 0;
+
+  // Large danger halo
+  const halo = ctx.createRadialGradient(x, y, r * 0.7, x, y, r * 3.2);
+  halo.addColorStop(0, T.halo0);
+  halo.addColorStop(1, T.halo1);
+  ctx.fillStyle = halo;
+  ctx.beginPath();
+  ctx.arc(x, y, r * 3.2, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Orbiting swarm satellites — six minor red blobs
+  const sats = 6;
+  for (let i = 0; i < sats; i++) {
+    const sa = (i / sats) * Math.PI * 2 + t * 0.025;
+    const sr = r * 1.6;
+    const sx = x + Math.cos(sa) * sr;
+    const sy = y + Math.sin(sa) * sr;
+    const sg = ctx.createRadialGradient(sx, sy, 0, sx, sy, r * 0.5);
+    sg.addColorStop(0, T.bodyDark);
+    sg.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = sg;
+    ctx.beginPath();
+    ctx.arc(sx, sy, r * 0.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = T.bodyDark;
+    ctx.beginPath();
+    ctx.arc(sx, sy, r * 0.22, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Body — same dart silhouette as skirmisher but bigger
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angle);
+  ctx.fillStyle = T.bodyDark;
+  ctx.beginPath();
+  ctx.ellipse(0, 0, r, r * 0.78, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = T.rim;
+  ctx.lineWidth = 2.0;
+  ctx.stroke();
+  // Five sharp teeth
+  ctx.fillStyle = T.teeth;
+  for (let i = -2; i <= 2; i++) {
+    const ty = i * r * 0.22;
+    ctx.beginPath();
+    ctx.moveTo(r * 0.55, ty);
+    ctx.lineTo(r * 0.96, ty - r * 0.1);
+    ctx.lineTo(r * 0.96, ty + r * 0.1);
+    ctx.closePath();
+    ctx.fill();
+  }
+  // Single large central eye
+  ctx.fillStyle = T.eye;
+  ctx.beginPath();
+  ctx.arc(r * 0.15, 0, r * 0.18, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+/**
+ * Tide Maw — depth 40. Massive brute with a slow-pulsing huge maw at
+ * the front. Visibly the largest, slowest threat.
+ */
+function drawTideMaw(
+  ctx: CanvasRenderingContext2D,
+  p: Body,
+  t: number,
+): void {
+  const T = currentTheme().brute;
+  const x = p.x ?? 0;
+  const y = p.y ?? 0;
+  const r = p.radius * 1.15;
+  const angle = Math.atan2(p.vy ?? 0, p.vx ?? 0) || 0;
+  const mawPulse = 0.5 + 0.4 * Math.abs(Math.sin(t * 0.04));
+
+  // Huge danger halo
+  const halo = ctx.createRadialGradient(x, y, r * 0.8, x, y, r * 3.0);
+  halo.addColorStop(0, T.halo0);
+  halo.addColorStop(1, T.halo1);
+  ctx.fillStyle = halo;
+  ctx.beginPath();
+  ctx.arc(x, y, r * 3.0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angle);
+  // Body — bulky elongated
+  ctx.fillStyle = T.bodyDark;
+  ctx.beginPath();
+  ctx.ellipse(0, 0, r * 1.05, r * 0.85, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = T.rim;
+  ctx.lineWidth = 2.2;
+  ctx.stroke();
+  // Multi-segment chitin (5 arcs)
+  ctx.strokeStyle = T.chitin;
+  ctx.lineWidth = 1.6;
+  for (let i = -2; i <= 2; i++) {
+    ctx.beginPath();
+    ctx.arc(i * r * 0.22, 0, r * 0.92, -Math.PI * 0.42, Math.PI * 0.42);
+    ctx.stroke();
+  }
+  // Huge maw — pulsing dark gradient at the front
+  const maw = ctx.createRadialGradient(r * 0.4, 0, r * 0.05, r * 0.4, 0, r * 0.65 * mawPulse);
+  maw.addColorStop(0, "rgba(0, 0, 0, 0.95)");
+  maw.addColorStop(0.7, "rgba(60, 0, 0, 0.6)");
+  maw.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.fillStyle = maw;
+  ctx.beginPath();
+  ctx.arc(r * 0.4, 0, r * 0.65 * mawPulse, 0, Math.PI * 2);
+  ctx.fill();
+  // Teeth ring around the maw
+  ctx.fillStyle = T.teeth;
+  const teethCount = 8;
+  for (let i = 0; i < teethCount; i++) {
+    const ta = (i / teethCount) * Math.PI - Math.PI * 0.5;
+    const baseR = r * 0.55;
+    const tipR = r * 0.85;
+    const tx = r * 0.4 + Math.cos(ta) * baseR;
+    const ty = Math.sin(ta) * baseR;
+    const tipX = r * 0.4 + Math.cos(ta) * tipR;
+    const tipY = Math.sin(ta) * tipR;
+    const px = -Math.sin(ta);
+    const py = Math.cos(ta);
+    const w = r * 0.06;
+    ctx.beginPath();
+    ctx.moveTo(tx + px * w, ty + py * w);
+    ctx.lineTo(tipX, tipY);
+    ctx.lineTo(tx - px * w, ty - py * w);
+    ctx.closePath();
+    ctx.fill();
+  }
+  // Two glowing eye dots
+  ctx.fillStyle = T.eye;
+  for (const ey of [-r * 0.42, r * 0.42]) {
+    ctx.beginPath();
+    ctx.arc(-r * 0.15, ey, r * 0.1, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+/**
+ * Abyss Eye — depth 60. Eldritch radial creature with a central eye
+ * and 8 spinning tentacles. No directional rotation — radial body
+ * stays oriented absolutely.
+ */
+function drawAbyssEye(
+  ctx: CanvasRenderingContext2D,
+  p: Body,
+  t: number,
+): void {
+  const T = currentTheme().predator;
+  const x = p.x ?? 0;
+  const y = p.y ?? 0;
+  const r = p.radius * 1.25;
+
+  // Massive halo
+  const halo = ctx.createRadialGradient(x, y, r * 0.6, x, y, r * 3.5);
+  halo.addColorStop(0, T.halo0);
+  halo.addColorStop(1, T.halo1);
+  ctx.fillStyle = halo;
+  ctx.beginPath();
+  ctx.arc(x, y, r * 3.5, 0, Math.PI * 2);
+  ctx.fill();
+
+  // 8 tentacles spinning around the center
+  const tentacles = 8;
+  const spin = t * 0.012;
+  ctx.lineCap = "round";
+  for (let i = 0; i < tentacles; i++) {
+    const baseA = (i / tentacles) * Math.PI * 2 + spin;
+    ctx.beginPath();
+    ctx.moveTo(x + Math.cos(baseA) * r * 0.6, y + Math.sin(baseA) * r * 0.6);
+    const segs = 8;
+    for (let s = 1; s <= segs; s++) {
+      const f = s / segs;
+      const wobble = Math.sin(t * 0.08 + i * 0.7 + f * 4) * 0.4;
+      const a = baseA + wobble;
+      const len = r * 0.6 + r * 1.8 * f;
+      ctx.lineTo(x + Math.cos(a) * len, y + Math.sin(a) * len);
+    }
+    const grad = ctx.createLinearGradient(
+      x + Math.cos(baseA) * r * 0.6,
+      y + Math.sin(baseA) * r * 0.6,
+      x + Math.cos(baseA) * r * 2.4,
+      y + Math.sin(baseA) * r * 2.4,
+    );
+    grad.addColorStop(0, T.bodyDark);
+    grad.addColorStop(1, "rgba(60, 0, 0, 0)");
+    ctx.strokeStyle = grad;
+    ctx.lineWidth = 4;
+    ctx.stroke();
+  }
+
+  // Central body — dark sphere
+  ctx.fillStyle = T.bodyDark;
+  ctx.beginPath();
+  ctx.arc(x, y, r * 0.7, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = T.rim;
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  // Iris — slowly closing/opening
+  const irisOpen = 0.4 + 0.3 * Math.abs(Math.sin(t * 0.025));
+  ctx.fillStyle = T.lure0;
+  ctx.beginPath();
+  ctx.ellipse(x, y, r * 0.4, r * 0.4 * irisOpen, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Pupil
+  ctx.fillStyle = "#000";
+  ctx.beginPath();
+  ctx.arc(x, y, r * 0.15, 0, Math.PI * 2);
+  ctx.fill();
 }
 
 function drawSkirmisherPredator(
