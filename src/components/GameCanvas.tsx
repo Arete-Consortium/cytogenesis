@@ -8,7 +8,6 @@ import {
   drawBodies,
   drawBonds,
   drawEnvCA,
-  drawLockOnTracers,
   drawPredators,
   drawSparkles,
   drawAmbientPlankton,
@@ -308,8 +307,10 @@ export default function GameCanvas() {
       if (world.traits.lockOnRange <= 0) return;
       const w = world.screenToWorld(sx, sy);
       const hit = world.hitTest(w.x, w.y);
-      if (!hit || hit.kind !== "free") return;
-      world.lockOn(hit, performance.now());
+      if (!hit) return;
+      const now = performance.now();
+      if (hit.kind === "predator") world.fireStinger(hit, now);
+      else if (hit.kind === "free") world.lockOn(hit, now);
     };
     const onPointerCancel = (e: PointerEvent) => {
       activePointers.delete(e.pointerId);
@@ -367,7 +368,6 @@ export default function GameCanvas() {
       applyCamera(ctx, world, dpr);
       drawEnvCA(ctx, world);
       drawBonds(ctx, world);
-      drawLockOnTracers(ctx, world);
       drawBodies(ctx, world, hoveredId, draggingId);
       drawPredators(ctx, world);
       drawSparkles(ctx, world);
@@ -397,6 +397,9 @@ export default function GameCanvas() {
           else if (ev === "combo") {
             audio.lockOn(); // bright zap — combo earned
             queueToast("COMBO");
+          }
+          else if (ev === "killPred") {
+            audio.hit();
           }
         }
         world.events.length = 0;

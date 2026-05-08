@@ -121,7 +121,13 @@ export function drawEnvCA(ctx: CanvasRenderingContext2D, world: World): void {
         data[k + 2] = T.ca.b;
         data[k + 3] = T.ca.a;
       } else {
-        data[k + 3] = 0;
+        // Faint baseline tint even for dead cells so the underlay
+        // doesn't leave hard rectangular dark "voids" against the bg
+        // gradient when a region of the CA is mostly dead.
+        data[k] = T.ca.r;
+        data[k + 1] = T.ca.g;
+        data[k + 2] = T.ca.b;
+        data[k + 3] = 8;
       }
     }
     bctx.putImageData(img, 0, 0);
@@ -920,6 +926,25 @@ export function drawSparkles(ctx: CanvasRenderingContext2D, world: World): void 
     ctx.arc(s.x, s.y, radius, 0, Math.PI * 2);
     ctx.stroke();
   }
+}
+
+/** Stinger-fire tracer lines — quick fade-out beam from bell to target. */
+export function drawTracers(ctx: CanvasRenderingContext2D, world: World): void {
+  if (world.tracers.length === 0) return;
+  const stingerColor = currentTheme().nodeColors.stinger;
+  for (const tr of world.tracers) {
+    const f = tr.age / tr.max;
+    const alpha = (1 - f) * 0.95;
+    ctx.strokeStyle = stingerColor;
+    ctx.globalAlpha = alpha;
+    ctx.lineWidth = 3 * (1 - f) + 0.6;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(tr.x1, tr.y1);
+    ctx.lineTo(tr.x2, tr.y2);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
 }
 
 /* ─── Thumbstick overlay (screen space) ──────────────────────────── */

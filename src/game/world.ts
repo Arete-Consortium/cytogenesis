@@ -69,6 +69,7 @@ export type WorldEvent =
   | "lockOn"
   | "telegraph"
   | "combo"
+  | "killPred"
   | `trait:${string}`
   | `biome:${number}`;
 
@@ -134,6 +135,8 @@ export class World {
   coreTrail: { x: number; y: number }[];
   /** Short-lived expanding rings on capture / hit. */
   sparkles: { x: number; y: number; age: number; max: number; hue: string }[];
+  /** Stinger-fire tracer lines (line segments that fade over `max` ticks). */
+  tracers: { x1: number; y1: number; x2: number; y2: number; age: number; max: number }[];
   /** Pending predator spawns — drawn as edge arrows during the warning window. */
   telegraphs: { x: number; y: number; untilMs: number }[];
   /** Thumbstick UI state (screen-space pixel coords). */
@@ -188,6 +191,7 @@ export class World {
     this.viewportHeight = 0;
     this.coreTrail = [];
     this.sparkles = [];
+    this.tracers = [];
     this.telegraphs = [];
     this.stickAnchor = null;
     this.stickKnob = null;
@@ -412,11 +416,19 @@ export class World {
 
   /** Age sparkles + drop expired ones. */
   private updateSparkles(): void {
-    if (this.sparkles.length === 0) return;
-    for (let i = this.sparkles.length - 1; i >= 0; i--) {
-      const s = this.sparkles[i];
-      s.age += 1;
-      if (s.age >= s.max) this.sparkles.splice(i, 1);
+    if (this.sparkles.length > 0) {
+      for (let i = this.sparkles.length - 1; i >= 0; i--) {
+        const s = this.sparkles[i];
+        s.age += 1;
+        if (s.age >= s.max) this.sparkles.splice(i, 1);
+      }
+    }
+    if (this.tracers.length > 0) {
+      for (let i = this.tracers.length - 1; i >= 0; i--) {
+        const tr = this.tracers[i];
+        tr.age += 1;
+        if (tr.age >= tr.max) this.tracers.splice(i, 1);
+      }
     }
   }
 
@@ -491,6 +503,7 @@ export class World {
   private makePredator(x: number, y: number): Body {
     const variant = this.rng.next() < PREDATOR_BRUTE_PROB ? "brute" : "skirmisher";
     const radius = variant === "brute" ? PREDATOR_RADIUS_BRUTE : PREDATOR_RADIUS_SKIRMISHER;
+    const health = variant === "brute" ? 4 : 2;
     return {
       id: newId("predator"),
       type: "spore",
@@ -501,7 +514,24 @@ export class World {
       vx: 0,
       vy: 0,
       variant,
+      health,
     };
+  }
+
+  /** Count captured nodes of a given type — used for toxic bell + stinger fire. */
+  private countCapturedType(type: NodeTypeId): number {
+    let n = 0;
+    for (const b of this.entityBodies) if (b.type === type) n++;
+    return n;
+  }
+
+  /** Drop predator with kill event + sparkle + shake. */
+  private killPredator(p: Body): void {
+    const idx = this.predators.indexOf(p);
+    if (idx >= 0) this.predators.splice(idx, 1);
+    this.emitSparkle(p.x ?? 0, p.y ?? 0, "rgba(248, 113, 113,");
+    this.events.push("killPred");
+    this.addShake(p.variant === "brute" ? 9 : 5);
   }
 
   /**
@@ -588,6 +618,19 @@ export class World {
       }
 
       this.emitSparkle(hit.x ?? 0, hit.y ?? 0, "rgba(248, 113, 113,");
+
+      // Toxic bell — every captured stinger deals counter-damage on
+      // contact. Predators die when their health hits 0. Mutual hit
+      // (you still paid the leaf above).
+      const stingers = this.countCapturedType("stinger");
+      if (stingers > 0 && p.health != null) {
+        p.health -= stingers;
+        if (p.health <= 0) {
+          this.killPredator(p);
+          continue;
+        }
+      }
+
       p.recoilUntil = this.tickN + PREDATOR_RECOIL_TICKS;
       const dx = (hit.x ?? 0) - px;
       const dy = (hit.y ?? 0) - py;
@@ -775,6 +818,38 @@ export class World {
     return true;
   }
 
+  /**
+   * Player input: fire a stinger projectile at a predator. Reuses the
+   * lock-on trait + cooldown. Damage = stinger count. Hit is instant
+   * (raycast), with a brief tracer pushed for the visual flash.
+   */
+  fireStinger(predator: Body, nowMs: number): boolean {
+    if (predator.kind !== "predator") return false;
+    if (this.traits.lockOnRange <= 0) return false;
+    if (nowMs < this.lockOnReadyAt) return false;
+    if (this.entityBodies.length === 0) return false;
+    const stingers = this.countCapturedType("stinger");
+    if (stingers <= 0) return false;
+    const core = this.entityBodies[0];
+    const dx = (predator.x ?? 0) - (core.x ?? 0);
+    const dy = (predator.y ?? 0) - (core.y ?? 0);
+    if (Math.hypot(dx, dy) > this.traits.lockOnRange) return false;
+    if (predator.health == null) return false;
+    predator.health -= stingers;
+    this.tracers.push({
+      x1: core.x ?? 0,
+      y1: core.y ?? 0,
+      x2: predator.x ?? 0,
+      y2: predator.y ?? 0,
+      age: 0,
+      max: 14,
+    });
+    this.lockOnReadyAt = nowMs + this.traits.lockOnCooldownMs;
+    this.events.push("lockOn");
+    if (predator.health <= 0) this.killPredator(predator);
+    return true;
+  }
+
   /** Reheat the sim so a drag has springy follow-through. */
   reheat(target = 0.3): void {
     this.sim.alpha(Math.max(this.sim.alpha(), target));
@@ -957,6 +1032,12 @@ export class World {
       const dx = (b.x ?? 0) - wx;
       const dy = (b.y ?? 0) - wy;
       if (dx * dx + dy * dy <= b.radius * b.radius) return b;
+    }
+    // Then predators — they're tap-targets for stinger fire.
+    for (const p of this.predators) {
+      const dx = (p.x ?? 0) - wx;
+      const dy = (p.y ?? 0) - wy;
+      if (dx * dx + dy * dy <= p.radius * p.radius) return p;
     }
     // Then free cells via quadtree.
     if (this.freeBodies.length === 0) return null;

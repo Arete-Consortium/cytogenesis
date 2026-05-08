@@ -34,6 +34,8 @@ export interface Body extends SimulationNodeDatum {
   recoilUntil?: number;
   /** Predator-only: visual + behavior variant. */
   variant?: PredatorVariant;
+  /** Predator-only: HP. Reaches ≤0 → killed. */
+  health?: number;
 }
 
 /** Camera transform — matches d3.zoomTransform shape (k, x, y). */
