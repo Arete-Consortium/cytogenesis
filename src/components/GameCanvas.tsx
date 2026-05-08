@@ -12,6 +12,7 @@ import {
   drawAmbientPlankton,
   drawTelegraphs,
   drawThumbstick,
+  drawBossIndicator,
   applyCamera,
 } from "@/game/render";
 import type { TraitState } from "@/game/traits";
@@ -427,8 +428,9 @@ export default function GameCanvas() {
       drawPredators(ctx, world);
       drawSparkles(ctx, world);
       ctx.restore();
-      // Screen-space overlays: telegraph arrows, thumbstick.
+      // Screen-space overlays: telegraph arrows, boss indicator, thumbstick.
       drawTelegraphs(ctx, world, width, height);
+      drawBossIndicator(ctx, world, width, height);
       drawThumbstick(ctx, world);
 
       // Drain world events → audio + trait toasts.

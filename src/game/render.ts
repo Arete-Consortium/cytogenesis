@@ -1456,6 +1456,64 @@ export function drawThumbstick(ctx: CanvasRenderingContext2D, world: World): voi
   ctx.stroke();
 }
 
+/* ─── Boss off-screen indicator ──────────────────────────────────── */
+
+/**
+ * If the centipede head is currently off-screen, draw a pulsing red
+ * chevron at the viewport edge pointing toward it. Runs in screen
+ * space after the camera restore so it sits on top of everything.
+ */
+export function drawBossIndicator(
+  ctx: CanvasRenderingContext2D,
+  world: World,
+  vw: number,
+  vh: number,
+): void {
+  const c = world.centipede;
+  if (!c) return;
+  const head = c.head;
+  const sx = (head.x ?? 0) * world.camera.k + world.camera.x;
+  const sy = (head.y ?? 0) * world.camera.k + world.camera.y;
+  const padding = 36;
+  const inside =
+    sx >= padding && sx <= vw - padding && sy >= padding && sy <= vh - padding;
+  if (inside) return;
+  const cx = vw / 2;
+  const cy = vh / 2;
+  const dx = sx - cx;
+  const dy = sy - cy;
+  const halfW = cx - padding;
+  const halfH = cy - padding;
+  const sX = halfW / Math.abs(dx || 1);
+  const sY = halfH / Math.abs(dy || 1);
+  const s = Math.min(sX, sY);
+  const ax = cx + dx * s;
+  const ay = cy + dy * s;
+  const angle = Math.atan2(sy - cy, sx - cx);
+  const pulse = 0.55 + 0.45 * Math.sin(world.tickN * 0.18);
+  const T = currentTheme();
+  ctx.save();
+  ctx.translate(ax, ay);
+  ctx.rotate(angle);
+  // Chevron
+  ctx.fillStyle = `${T.telegraph} ${(0.6 + 0.3 * pulse).toFixed(3)})`;
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.lineTo(-22, -12);
+  ctx.lineTo(-15, 0);
+  ctx.lineTo(-22, 12);
+  ctx.closePath();
+  ctx.fill();
+  // Trail line for orientation
+  ctx.strokeStyle = `${T.telegraph} ${(0.4 * pulse).toFixed(3)})`;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(-22, 0);
+  ctx.lineTo(-40, 0);
+  ctx.stroke();
+  ctx.restore();
+}
+
 /* ─── Telegraphs (incoming-predator warning) ──────────────────────── */
 
 /**

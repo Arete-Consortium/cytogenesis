@@ -825,7 +825,9 @@ export class World {
     const cx = core?.x ?? 0;
     const cy = core?.y ?? 0;
     const angle = this.rng.next() * Math.PI * 2;
-    const spawnDist = 700;
+    // Spawn just off-screen — close enough that the player sees it
+    // approach almost immediately, far enough to not be on top of them.
+    const spawnDist = 450;
     const a = this.arenaHalf;
     const hx = Math.max(-a, Math.min(a, cx + Math.cos(angle) * spawnDist));
     const hy = Math.max(-a, Math.min(a, cy + Math.sin(angle) * spawnDist));
