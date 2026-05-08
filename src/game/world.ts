@@ -177,17 +177,17 @@ const BIOME_MILESTONES = [20, 40, 60, 90, 130, 180, 240, 310, 400, 500, 620];
  * gone.
  */
 const BOSS_KIND_BY_BIOME: Record<number, BossKind> = {
-  20: "centipede",
-  40: "centipede",
-  60: "centipede",
+  20: "centipede",  // first encounter — the lunge fight
+  40: "swarmLord",  // hive queen — orbiting drones
+  60: "tideMaw",    // mirror — copies your bell
   90: "centipede",
-  130: "centipede",
-  180: "centipede",
+  130: "swarmLord",
+  180: "tideMaw",
   240: "centipede",
-  310: "centipede",
-  400: "centipede",
+  310: "swarmLord",
+  400: "tideMaw",
   500: "centipede",
-  620: "centipede",
+  620: "swarmLord",
 };
 /** Level (1/2/3) per milestone — drives reward type + difficulty. */
 const CENTIPEDE_LEVEL_BY_BIOME: Record<number, number> = {
@@ -203,26 +203,44 @@ const CENTIPEDE_LEVEL_BY_BIOME: Record<number, number> = {
   500: 1,
   620: 2,
 };
-/** Boss kind = always centipede now. Different per-level stats below. */
 const BOSS_HEALTH: Record<BossKind, number> = {
-  swarmLord: 20,    // legacy, unused
-  tideMaw: 30,      // legacy, unused
+  swarmLord: 36,    // hive queen — tankier, gated behind drone kills
+  tideMaw: 28,      // mirror — proportional to player mass at spawn
   abyssEye: 40,     // legacy, unused
-  centipede: 24,    // base; scales per level + cycle
+  centipede: 24,
 };
 const BOSS_RADIUS: Record<BossKind, number> = {
-  swarmLord: 22,
-  tideMaw: 32,
+  swarmLord: 30,
+  tideMaw: 24,
   abyssEye: 28,
   centipede: 22,
 };
 const BOSS_REWARD_TYPE: Record<BossKind, NodeTypeId> = {
-  swarmLord: "chloroplast",
-  tideMaw: "membrane",
+  swarmLord: "spore",       // hive queen drops spore mass
+  tideMaw: "stinger",       // mirror drops stinger mass
   abyssEye: "mitochondrion",
-  centipede: "membrane", // overridden per-level in killCentipede
+  centipede: "membrane",
 };
 const BOSS_REWARD_AMOUNT = 5;
+
+/** Hive queen tuning. */
+const HIVE_DRONE_COUNT = 6;
+const HIVE_DRONE_RADIUS = 9;
+const HIVE_DRONE_HEALTH = 4;
+const HIVE_ORBIT_RADIUS = 95;
+const HIVE_ORBIT_RATE = 0.018;
+const HIVE_QUEEN_SPEED = 0.30;       // drifts toward player slowly
+const HIVE_QUEEN_DR_WITH_DRONES = 0.85; // damage reduction while drones alive
+const HIVE_DRONE_DAMAGE = 2;
+const HIVE_QUEEN_DAMAGE = 4;
+const HIVE_PLAYER_DAMAGE_COOLDOWN_TICKS = 50;
+
+/** Mirror tuning. */
+const MIRROR_SPAWN_DISTANCE = 280;
+const MIRROR_MASS_FRACTION = 0.5;     // half player's mass at spawn
+const MIRROR_MAX_MASS = 50;
+const MIRROR_SPEED = 0.85;            // bit slower than max player vel
+const MIRROR_PLAYER_DAMAGE_COOLDOWN_TICKS = 55;
 
 /** Centipede tuning. */
 const CENTIPEDE_HEAD_SPEED = 1.1;
@@ -459,6 +477,29 @@ export class World {
   } | null;
   /** wallMs at which to spawn the next centipede; null = no spawn pending. */
   nextCentipedeAtMs: number | null;
+  /** Active hive-queen boss. */
+  hiveQueen: {
+    body: Body;
+    drones: Body[];
+    level: number;
+    cycleRound: number;
+    maxHealth: number;
+    spawnedAtTickN: number;
+    nextDamageTickN: number;
+  } | null;
+  /** Active mirror boss. */
+  mirror: {
+    body: Body;
+    level: number;
+    cycleRound: number;
+    maxHealth: number;
+    spawnedAtTickN: number;
+    nextDamageTickN: number;
+    /** Snapshot of player's absorbed dict at spawn — drives mirror's bell shape. */
+    mirroredAbsorbed: Record<NodeTypeId, number>;
+    /** Hue shift for visual distinction. */
+    hueShift: number;
+  } | null;
   /** Wallclock at which the next chloroplast regen will fire. */
   private nextRegenAtMs: number;
   /** Wallclock at which the next ecology pass will fire. */
@@ -566,6 +607,8 @@ export class World {
     this.bossesDefeated = 0;
     this.nextMilestoneIndex = 0;
     this.centipede = null;
+    this.hiveQueen = null;
+    this.mirror = null;
     // Schedule the first centipede shortly after run start so the
     // player isn't dropped straight into the boss fight.
     this.nextCentipedeAtMs = CENTIPEDE_INITIAL_SPAWN_DELAY_MS;
@@ -734,6 +777,8 @@ export class World {
     }
     this.integrateFree(scale);
     this.integrateCentipede(scale);
+    this.integrateHiveQueen(scale);
+    this.integrateMirror(scale);
     this.simAccum += scale;
     while (this.simAccum >= 1) {
       this.sim.tick();
@@ -1009,9 +1054,158 @@ export class World {
    * centipede is the only boss creature now — head + initial 3
    * segments, eats free cells to grow, dies when its head HP hits 0.
    */
-  private spawnBoss(_kind: BossKind, milestone: number): void {
+  private spawnBoss(kind: BossKind, milestone: number): void {
     const level = CENTIPEDE_LEVEL_BY_BIOME[milestone] ?? 1;
-    this.spawnCentipede(level);
+    if (kind === "swarmLord") {
+      this.spawnHiveQueen(level);
+    } else if (kind === "tideMaw") {
+      this.spawnMirror(level);
+    } else {
+      this.spawnCentipede(level);
+    }
+  }
+
+  private spawnHiveQueen(level: number): void {
+    const core = this.entityBodies[0];
+    const cx = core?.x ?? 0;
+    const cy = core?.y ?? 0;
+    const angle = this.rng.next() * Math.PI * 2;
+    const spawnDist = 240;
+    const a = this.arenaHalf;
+    const qx = Math.max(-a, Math.min(a, cx + Math.cos(angle) * spawnDist));
+    const qy = Math.max(-a, Math.min(a, cy + Math.sin(angle) * spawnDist));
+    const cycle = this.cycleRound();
+    const cycleMul = Math.pow(1.4, cycle);
+    const levelMul = 1 + (level - 1) * 0.4;
+    const bodyRadius = BOSS_RADIUS.swarmLord * (1 + cycle * 0.05) * (1 + (level - 1) * 0.08);
+    const health = Math.round(BOSS_HEALTH.swarmLord * cycleMul * levelMul);
+    const body: Body = {
+      id: newId("hive-queen"),
+      type: "spore",
+      kind: "predator",
+      radius: bodyRadius,
+      x: qx,
+      y: qy,
+      vx: 0,
+      vy: 0,
+      variant: "brute",
+      health,
+      bossKind: "swarmLord",
+    };
+    this.predators.push(body);
+
+    const drones: Body[] = [];
+    for (let i = 0; i < HIVE_DRONE_COUNT; i++) {
+      const a = (i / HIVE_DRONE_COUNT) * Math.PI * 2;
+      const drone: Body = {
+        id: newId("hive-drone"),
+        type: "spore",
+        kind: "predator",
+        radius: HIVE_DRONE_RADIUS * (1 + (level - 1) * 0.1),
+        x: qx + Math.cos(a) * HIVE_ORBIT_RADIUS,
+        y: qy + Math.sin(a) * HIVE_ORBIT_RADIUS,
+        vx: 0,
+        vy: 0,
+        variant: "skirmisher",
+        health: HIVE_DRONE_HEALTH + Math.floor((level - 1) * 1.5),
+        bossKind: "swarmLord",
+        segmentIndex: i + 1, // drone index (1+); 0 = queen body itself
+      };
+      drones.push(drone);
+      this.predators.push(drone);
+    }
+
+    this.hiveQueen = {
+      body,
+      drones,
+      level,
+      cycleRound: cycle,
+      maxHealth: health,
+      spawnedAtTickN: this.tickN,
+      nextDamageTickN: 0,
+    };
+    this.events.push("bossSpawn");
+    this.addShake(15);
+  }
+
+  private spawnMirror(level: number): void {
+    const core = this.entityBodies[0];
+    const cx = core?.x ?? 0;
+    const cy = core?.y ?? 0;
+    const angle = this.rng.next() * Math.PI * 2;
+    const a = this.arenaHalf;
+    const mx = Math.max(-a, Math.min(a, cx + Math.cos(angle) * MIRROR_SPAWN_DISTANCE));
+    const my = Math.max(-a, Math.min(a, cy + Math.sin(angle) * MIRROR_SPAWN_DISTANCE));
+    // Snapshot a fraction of the player's absorbed dict — mirror has
+    // half the player's mass at spawn, capped, distributed proportionally.
+    const playerTotal = Math.max(1, this.totalAbsorbed);
+    const targetMass = Math.min(
+      MIRROR_MAX_MASS,
+      Math.max(8, Math.floor(playerTotal * MIRROR_MASS_FRACTION)),
+    );
+    const mirrored: Record<NodeTypeId, number> = {
+      core: 1,
+      propulsion: 0,
+      sensor: 0,
+      membrane: 0,
+      mouth: 0,
+      stinger: 0,
+      chloroplast: 0,
+      mitochondrion: 0,
+      spore: 0,
+    };
+    let placed = 0;
+    if (this.totalAbsorbed > 0) {
+      // Proportional copy of player's mix, scaled to targetMass.
+      const factor = targetMass / playerTotal;
+      for (const k of Object.keys(this.absorbed) as NodeTypeId[]) {
+        if (k === "core") continue;
+        const n = Math.floor((this.absorbed[k] ?? 0) * factor);
+        mirrored[k] = n;
+        placed += n;
+      }
+    }
+    // Pad with random types until we hit targetMass so the mirror always
+    // has SOMETHING even if the player just spawned.
+    const padTypes: NodeTypeId[] = ["propulsion", "sensor", "membrane", "stinger"];
+    while (placed < targetMass) {
+      const t = this.rng.pick(padTypes);
+      mirrored[t] = (mirrored[t] ?? 0) + 1;
+      placed++;
+    }
+    const cycle = this.cycleRound();
+    const cycleMul = Math.pow(1.4, cycle);
+    const levelMul = 1 + (level - 1) * 0.3;
+    const bodyRadius = BOSS_RADIUS.tideMaw + targetMass * 0.5;
+    const health = Math.round(
+      (BOSS_HEALTH.tideMaw + targetMass * 0.5) * cycleMul * levelMul,
+    );
+    const body: Body = {
+      id: newId("mirror"),
+      type: "core",
+      kind: "predator",
+      radius: bodyRadius,
+      x: mx,
+      y: my,
+      vx: 0,
+      vy: 0,
+      variant: "brute",
+      health,
+      bossKind: "tideMaw",
+    };
+    this.predators.push(body);
+    this.mirror = {
+      body,
+      level,
+      cycleRound: cycle,
+      maxHealth: health,
+      spawnedAtTickN: this.tickN,
+      nextDamageTickN: 0,
+      mirroredAbsorbed: mirrored,
+      hueShift: this.rng.range(120, 280), // tinted away from cyan
+    };
+    this.events.push("bossSpawn");
+    this.addShake(15);
   }
 
   private spawnCentipede(level: number): void {
@@ -1400,15 +1594,182 @@ export class World {
     this.nextCentipedeAtMs = this.wallMs + CENTIPEDE_RESPAWN_DELAY_MS;
   }
 
-  /** Spawn the next centipede when the breather window has elapsed. */
+  /**
+   * Hive Queen tick — drones orbit the queen + dive at the player on
+   * a slow cadence. Queen drifts toward the player. While ANY drone
+   * is alive, queen takes reduced damage (gating logic lives in the
+   * fireStinger branch). Contact damage on queen + drones.
+   */
+  private integrateHiveQueen(scale: number): void {
+    const h = this.hiveQueen;
+    if (!h) return;
+    const a = this.arenaHalf;
+    const span = a * 2;
+    const core = this.entityBodies[0];
+    const cx = core?.x ?? 0;
+    const cy = core?.y ?? 0;
+
+    // Queen drift toward player (slow + steady).
+    const qx = h.body.x ?? 0;
+    const qy = h.body.y ?? 0;
+    const dxp = cx - qx;
+    const dyp = cy - qy;
+    const len = Math.hypot(dxp, dyp) || 1;
+    h.body.vx = (dxp / len) * HIVE_QUEEN_SPEED;
+    h.body.vy = (dyp / len) * HIVE_QUEEN_SPEED;
+    let nx = qx + h.body.vx * scale;
+    let ny = qy + h.body.vy * scale;
+    if (nx > a) nx -= span;
+    else if (nx < -a) nx += span;
+    if (ny > a) ny -= span;
+    else if (ny < -a) ny += span;
+    h.body.x = nx;
+    h.body.y = ny;
+
+    // Drones orbit the queen at constant radius + rotation rate.
+    const phase = this.tickN * HIVE_ORBIT_RATE;
+    for (let i = 0; i < h.drones.length; i++) {
+      const d = h.drones[i];
+      const a0 = (i / HIVE_DRONE_COUNT) * Math.PI * 2 + phase;
+      d.x = (h.body.x ?? 0) + Math.cos(a0) * HIVE_ORBIT_RADIUS;
+      d.y = (h.body.y ?? 0) + Math.sin(a0) * HIVE_ORBIT_RADIUS;
+      d.vx = -Math.sin(a0) * HIVE_ORBIT_RADIUS * HIVE_ORBIT_RATE;
+      d.vy = Math.cos(a0) * HIVE_ORBIT_RADIUS * HIVE_ORBIT_RATE;
+    }
+
+    // Damage player on contact (queen body + any drone).
+    if (this.tickN >= h.nextDamageTickN) {
+      // Queen contact
+      const qdx = cx - (h.body.x ?? 0);
+      const qdy = cy - (h.body.y ?? 0);
+      const qr = h.body.radius + (core?.radius ?? 18);
+      if (qdx * qdx + qdy * qdy <= qr * qr) {
+        this.damageAbsorbed(HIVE_QUEEN_DAMAGE);
+        this.addShake(10);
+        this.events.push("hit");
+        this.emitSparkle(cx, cy, "rgba(248, 113, 113,");
+        h.nextDamageTickN = this.tickN + HIVE_PLAYER_DAMAGE_COOLDOWN_TICKS;
+      } else {
+        for (const d of h.drones) {
+          const ddx = cx - (d.x ?? 0);
+          const ddy = cy - (d.y ?? 0);
+          const dr = d.radius + (core?.radius ?? 18);
+          if (ddx * ddx + ddy * ddy <= dr * dr) {
+            this.damageAbsorbed(HIVE_DRONE_DAMAGE);
+            this.addShake(6);
+            this.events.push("hit");
+            this.emitSparkle(cx, cy, "rgba(248, 113, 113,");
+            h.nextDamageTickN = this.tickN + HIVE_PLAYER_DAMAGE_COOLDOWN_TICKS;
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Mirror tick — chases player at slightly slower than max player
+   * speed, deals contact damage scaled by its absorbed stingers.
+   */
+  private integrateMirror(scale: number): void {
+    const m = this.mirror;
+    if (!m) return;
+    const a = this.arenaHalf;
+    const span = a * 2;
+    const core = this.entityBodies[0];
+    const cx = core?.x ?? 0;
+    const cy = core?.y ?? 0;
+    const mx = m.body.x ?? 0;
+    const my = m.body.y ?? 0;
+    const dx = cx - mx;
+    const dy = cy - my;
+    const len = Math.hypot(dx, dy) || 1;
+    const speed = MIRROR_SPEED * (1 + m.cycleRound * 0.1) * (1 + (m.level - 1) * 0.1);
+    m.body.vx = (dx / len) * speed;
+    m.body.vy = (dy / len) * speed;
+    let nx = mx + m.body.vx * scale;
+    let ny = my + m.body.vy * scale;
+    if (nx > a) nx -= span;
+    else if (nx < -a) nx += span;
+    if (ny > a) ny -= span;
+    else if (ny < -a) ny += span;
+    m.body.x = nx;
+    m.body.y = ny;
+
+    // Damage player on contact.
+    if (this.tickN >= m.nextDamageTickN) {
+      const ddx = cx - (m.body.x ?? 0);
+      const ddy = cy - (m.body.y ?? 0);
+      const dr = m.body.radius + (core?.radius ?? 18);
+      if (ddx * ddx + ddy * ddy <= dr * dr) {
+        const stingerBite = m.mirroredAbsorbed.stinger ?? 0;
+        const damage = 3 + Math.min(6, stingerBite);
+        this.damageAbsorbed(damage);
+        this.addShake(12);
+        this.events.push("hit");
+        this.emitSparkle(cx, cy, "rgba(248, 113, 113,");
+        m.nextDamageTickN = this.tickN + MIRROR_PLAYER_DAMAGE_COOLDOWN_TICKS;
+      }
+    }
+  }
+
+  /** Hive Queen kill: drop reward + clear from predators array. */
+  private killHiveQueen(): void {
+    const h = this.hiveQueen;
+    if (!h) return;
+    this.predators = this.predators.filter((p) => p !== h.body && !h.drones.includes(p));
+    this.emitSparkle(h.body.x ?? 0, h.body.y ?? 0, "rgba(255, 200, 100,");
+    this.addShake(20);
+    this.events.push("killBoss");
+    this.bossesDefeated += 1;
+    const cycleMul = Math.pow(1.5, h.cycleRound);
+    const rewardAmount = Math.round(BOSS_REWARD_AMOUNT * cycleMul);
+    for (let i = 0; i < rewardAmount; i++) {
+      this.absorbed.spore += 1;
+      this.totalAbsorbed += 1;
+    }
+    this.peakCaptured = Math.max(this.peakCaptured, this.totalAbsorbed);
+    this.traits = recomputeTraits(this.absorbed);
+    this.hiveQueen = null;
+    this.checkMilestones();
+    this.nextCentipedeAtMs = this.wallMs + CENTIPEDE_RESPAWN_DELAY_MS;
+  }
+
+  /** Mirror kill: drop reward + clear from predators array. */
+  private killMirror(): void {
+    const m = this.mirror;
+    if (!m) return;
+    this.predators = this.predators.filter((p) => p !== m.body);
+    this.emitSparkle(m.body.x ?? 0, m.body.y ?? 0, "rgba(220, 140, 255,");
+    this.addShake(20);
+    this.events.push("killBoss");
+    this.bossesDefeated += 1;
+    const cycleMul = Math.pow(1.5, m.cycleRound);
+    const rewardAmount = Math.round(BOSS_REWARD_AMOUNT * cycleMul);
+    for (let i = 0; i < rewardAmount; i++) {
+      this.absorbed.stinger += 1;
+      this.totalAbsorbed += 1;
+    }
+    this.peakCaptured = Math.max(this.peakCaptured, this.totalAbsorbed);
+    this.traits = recomputeTraits(this.absorbed);
+    this.mirror = null;
+    this.checkMilestones();
+    this.nextCentipedeAtMs = this.wallMs + CENTIPEDE_RESPAWN_DELAY_MS;
+  }
+
+  /** Spawn the next boss when the breather window has elapsed.
+   *  Cycles centipede → hive queen → mirror → centipede → ... */
   private maybeRespawnCentipede(): void {
-    if (this.centipede) return;
+    if (this.centipede || this.hiveQueen || this.mirror) return;
     if (this.nextCentipedeAtMs == null) return;
     if (this.wallMs < this.nextCentipedeAtMs) return;
     this.nextCentipedeAtMs = null;
-    // Cycle level 1 → 2 → 3 → 1 across kills.
-    const nextLevel = (this.bossesDefeated % 3) + 1;
-    this.spawnCentipede(nextLevel);
+    const cycle: BossKind[] = ["centipede", "swarmLord", "tideMaw"];
+    const nextKind = cycle[this.bossesDefeated % cycle.length];
+    const nextLevel = (Math.floor(this.bossesDefeated / cycle.length) % 3) + 1;
+    if (nextKind === "centipede") this.spawnCentipede(nextLevel);
+    else if (nextKind === "swarmLord") this.spawnHiveQueen(nextLevel);
+    else if (nextKind === "tideMaw") this.spawnMirror(nextLevel);
   }
 
   /**
@@ -1871,7 +2232,43 @@ export class World {
       return true;
     }
 
-    // Generic predator damage (legacy path; unused with centipede-only).
+    // Hive Queen: drones take damage first (they shield the queen).
+    // Once all drones are dead, queen body becomes hittable.
+    if (predator.bossKind === "swarmLord") {
+      const h = this.hiveQueen;
+      if (!h) return true;
+      if (predator === h.body) {
+        // Direct hit on queen body — reduced damage while drones alive.
+        if (predator.health == null) return true;
+        const dmg = h.drones.length > 0
+          ? Math.max(1, Math.round(stingers * (1 - HIVE_QUEEN_DR_WITH_DRONES)))
+          : stingers;
+        predator.health -= dmg;
+        if (predator.health <= 0) this.killHiveQueen();
+      } else {
+        // Drone — full damage. Killing it removes from chain.
+        if (predator.health == null) return true;
+        predator.health -= stingers;
+        if (predator.health <= 0) {
+          h.drones = h.drones.filter((d) => d !== predator);
+          this.predators = this.predators.filter((p) => p !== predator);
+          this.emitSparkle(predator.x ?? 0, predator.y ?? 0, "rgba(255, 200, 100,");
+        }
+      }
+      return true;
+    }
+
+    // Mirror: single body, full damage. Once HP gone the mirror dies.
+    if (predator.bossKind === "tideMaw") {
+      const m = this.mirror;
+      if (!m) return true;
+      if (predator.health == null) return true;
+      predator.health -= stingers;
+      if (predator.health <= 0) this.killMirror();
+      return true;
+    }
+
+    // Generic predator damage (legacy path; unused with boss-only).
     if (predator.health == null) return true;
     predator.health -= stingers;
     if (predator.health <= 0) this.killPredator(predator);

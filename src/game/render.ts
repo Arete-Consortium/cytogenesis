@@ -1123,19 +1123,204 @@ function drawEditorOverlay(ctx: CanvasRenderingContext2D, world: World): void {
 
 export function drawPredators(ctx: CanvasRenderingContext2D, world: World): void {
   // Centipede gets a unified render (head + chain) so the segments
-  // connect smoothly. All other predators (legacy) still draw
-  // individually if any are around.
+  // connect smoothly. Hive Queen draws its own queen + drones in a
+  // single pass. Mirror gets a special bell render that mirrors the
+  // player's morph.
   if (world.centipede) drawCentipede(ctx, world);
+  if (world.hiveQueen) drawHiveQueen(ctx, world);
+  if (world.mirror) drawMirror(ctx, world);
   if (world.predators.length === 0) return;
   const t = world.tickN;
   for (const p of world.predators) {
-    if (p.bossKind === "centipede") continue; // already drawn above
-    if (p.bossKind === "swarmLord") drawSwarmLord(ctx, p, t);
-    else if (p.bossKind === "tideMaw") drawTideMaw(ctx, p, t);
-    else if (p.bossKind === "abyssEye") drawAbyssEye(ctx, p, t);
+    // Bosses already drawn above.
+    if (p.bossKind === "centipede") continue;
+    if (p.bossKind === "swarmLord") continue;
+    if (p.bossKind === "tideMaw") continue;
+    if (p.bossKind === "abyssEye") drawAbyssEye(ctx, p, t);
     else if (p.variant === "brute") drawBrutePredator(ctx, p, t);
     else drawSkirmisherPredator(ctx, p, t);
   }
+}
+
+/* ─── Hive Queen ──────────────────────────────────────────────────── */
+
+function drawHiveQueen(ctx: CanvasRenderingContext2D, world: World): void {
+  const h = world.hiveQueen;
+  if (!h) return;
+  const t = world.tickN;
+  const q = h.body;
+  const qx = q.x ?? 0;
+  const qy = q.y ?? 0;
+  const qr = q.radius;
+
+  // Halo — purple-amber threat aura, pulses with tick.
+  const haloPulse = 0.7 + 0.3 * Math.sin(t * 0.07);
+  const halo = ctx.createRadialGradient(qx, qy, qr * 0.4, qx, qy, qr * 3);
+  halo.addColorStop(0, `rgba(220, 130, 60, ${(0.3 * haloPulse).toFixed(3)})`);
+  halo.addColorStop(1, "rgba(220, 130, 60, 0)");
+  ctx.fillStyle = halo;
+  ctx.beginPath();
+  ctx.arc(qx, qy, qr * 3, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Tether lines from queen to each living drone — thin glow strands
+  // so the structure reads as a hive, not just clumped circles.
+  ctx.strokeStyle = `rgba(255, 200, 120, 0.25)`;
+  ctx.lineWidth = 1.4;
+  for (const d of h.drones) {
+    ctx.beginPath();
+    ctx.moveTo(qx, qy);
+    ctx.lineTo(d.x ?? 0, d.y ?? 0);
+    ctx.stroke();
+  }
+
+  // Drones — small armored orbs with a faint trail in their orbit
+  // direction. Each gets a glowing stinger tip.
+  for (const d of h.drones) {
+    const dx = d.x ?? 0;
+    const dy = d.y ?? 0;
+    // Mini halo
+    const dh = ctx.createRadialGradient(dx, dy, 0, dx, dy, d.radius * 2);
+    dh.addColorStop(0, "rgba(255, 200, 120, 0.55)");
+    dh.addColorStop(1, "rgba(255, 200, 120, 0)");
+    ctx.fillStyle = dh;
+    ctx.beginPath();
+    ctx.arc(dx, dy, d.radius * 2, 0, Math.PI * 2);
+    ctx.fill();
+    // Body — dark olive with bright dot center
+    ctx.fillStyle = "#2a1408";
+    ctx.beginPath();
+    ctx.arc(dx, dy, d.radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "#f5b572";
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+    // Hot core
+    ctx.fillStyle = "rgba(255, 220, 130, 0.95)";
+    ctx.beginPath();
+    ctx.arc(dx, dy, d.radius * 0.32, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Queen body — large segmented carapace. Two layers of armor + a
+  // glowing core that pulses.
+  const corePulse = 0.6 + 0.4 * Math.sin(t * 0.09);
+  // Outer plate
+  ctx.fillStyle = "#2a0c08";
+  ctx.beginPath();
+  ctx.arc(qx, qy, qr, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = "#6a2010";
+  ctx.lineWidth = 2.5;
+  ctx.stroke();
+  // Plate seams (6 radial)
+  ctx.strokeStyle = "rgba(0, 0, 0, 0.55)";
+  ctx.lineWidth = 1.4;
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2;
+    ctx.beginPath();
+    ctx.moveTo(qx + Math.cos(a) * qr * 0.35, qy + Math.sin(a) * qr * 0.35);
+    ctx.lineTo(qx + Math.cos(a) * qr * 0.95, qy + Math.sin(a) * qr * 0.95);
+    ctx.stroke();
+  }
+  // Inner plate
+  ctx.fillStyle = "#4a1410";
+  ctx.beginPath();
+  ctx.arc(qx, qy, qr * 0.55, 0, Math.PI * 2);
+  ctx.fill();
+  // Glowing pulse core — visibly stronger when drones are gone
+  const coreVis = h.drones.length === 0 ? 0.95 : 0.55;
+  ctx.fillStyle = `rgba(255, ${Math.round(120 + 80 * corePulse)}, 60, ${coreVis})`;
+  ctx.beginPath();
+  ctx.arc(qx, qy, qr * (0.25 + 0.1 * corePulse), 0, Math.PI * 2);
+  ctx.fill();
+  // Vulnerability ring when drones are dead — sharp red rim that
+  // reads "hit me now"
+  if (h.drones.length === 0) {
+    const ringPulse = 0.5 + 0.5 * Math.sin(t * 0.18);
+    ctx.strokeStyle = `rgba(255, 70, 60, ${ringPulse.toFixed(3)})`;
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    ctx.arc(qx, qy, qr * 1.2, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+}
+
+/* ─── Mirror ──────────────────────────────────────────────────────── */
+
+function drawMirror(ctx: CanvasRenderingContext2D, world: World): void {
+  const m = world.mirror;
+  if (!m) return;
+  const t = world.tickN;
+  const x = m.body.x ?? 0;
+  const y = m.body.y ?? 0;
+  const r = m.body.radius;
+
+  // Threat halo — magenta/violet so the mirror reads distinct from
+  // the cyan player bell.
+  const halo = ctx.createRadialGradient(x, y, r * 0.4, x, y, r * 2.6);
+  halo.addColorStop(0, "rgba(220, 100, 220, 0.35)");
+  halo.addColorStop(1, "rgba(220, 100, 220, 0)");
+  ctx.fillStyle = halo;
+  ctx.beginPath();
+  ctx.arc(x, y, r * 2.6, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Bell shape — same parametric perimeter as the player's bell, but
+  // morphed by the mirror's own absorbed dict. Tinted magenta so the
+  // player can tell it's a copy, not their own.
+  const N = 36;
+  const stingers = m.mirroredAbsorbed.stinger ?? 0;
+  const mouths = m.mirroredAbsorbed.mouth ?? 0;
+  const membranes = m.mirroredAbsorbed.membrane ?? 0;
+  ctx.beginPath();
+  for (let i = 0; i < N; i++) {
+    const a = (i / N) * Math.PI * 2;
+    let rr = r;
+    rr += Math.sin(a * 5 + t * 0.05) * r * 0.05;
+    if (membranes > 0) rr += Math.sin(a * (3 + membranes)) * r * 0.07;
+    if (mouths > 0) rr += Math.cos(a * (2 + mouths)) * r * 0.06;
+    // Stinger spikes
+    if (stingers > 0) {
+      for (let s = 0; s < stingers; s++) {
+        const sa = -Math.PI + ((s + 0.5) / stingers) * Math.PI;
+        let d = Math.abs(a - sa);
+        if (d > Math.PI) d = 2 * Math.PI - d;
+        if (d < 0.4) {
+          const f = 1 - d / 0.4;
+          rr += r * 0.18 * f * f;
+        }
+      }
+    }
+    const px = x + Math.cos(a) * rr;
+    const py = y + Math.sin(a) * rr;
+    if (i === 0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  }
+  ctx.closePath();
+  // Magenta gradient fill for distinction
+  const fillGrad = ctx.createRadialGradient(x, y, 0, x, y, r);
+  fillGrad.addColorStop(0, "rgba(255, 130, 220, 0.9)");
+  fillGrad.addColorStop(0.6, "rgba(180, 70, 200, 0.85)");
+  fillGrad.addColorStop(1, "rgba(110, 30, 140, 0.95)");
+  ctx.fillStyle = fillGrad;
+  ctx.fill();
+  ctx.strokeStyle = "rgba(255, 200, 240, 0.55)";
+  ctx.lineWidth = 1.6;
+  ctx.stroke();
+
+  // Glowing core — pulses red when low health (visceral signal)
+  const hpFrac = Math.max(0, (m.body.health ?? 0) / m.maxHealth);
+  const coreColor =
+    hpFrac > 0.5
+      ? "rgba(255, 220, 255, 0.85)"
+      : hpFrac > 0.2
+      ? "rgba(255, 180, 200, 0.85)"
+      : "rgba(255, 80, 80, 0.95)";
+  ctx.fillStyle = coreColor;
+  ctx.beginPath();
+  ctx.arc(x, y, r * 0.32, 0, Math.PI * 2);
+  ctx.fill();
 }
 
 /**
@@ -2204,12 +2389,31 @@ export function drawBossHealthBar(
   world: World,
   vw: number,
 ): void {
-  const c = world.centipede;
-  if (!c) return;
-  const hp = Math.max(0, c.head.health ?? 0);
-  const maxHp = Math.max(1, c.maxHealth);
+  // Pick whichever boss is alive — only one at a time.
+  let hp = 0;
+  let maxHp = 1;
+  let label = "";
+  let enraged = false;
+  if (world.centipede) {
+    const c = world.centipede;
+    hp = Math.max(0, c.head.health ?? 0);
+    maxHp = Math.max(1, c.maxHealth);
+    enraged = c.enragedFlashed;
+    label = `CENTIPEDE · LV ${c.level}${c.cycleRound > 0 ? ` · CYCLE ${c.cycleRound}` : ""}`;
+  } else if (world.hiveQueen) {
+    const h = world.hiveQueen;
+    hp = Math.max(0, h.body.health ?? 0);
+    maxHp = Math.max(1, h.maxHealth);
+    label = `HIVE QUEEN · LV ${h.level}${h.cycleRound > 0 ? ` · CYCLE ${h.cycleRound}` : ""}${h.drones.length > 0 ? ` · ${h.drones.length} DRONE${h.drones.length === 1 ? "" : "S"}` : " · EXPOSED"}`;
+  } else if (world.mirror) {
+    const m = world.mirror;
+    hp = Math.max(0, m.body.health ?? 0);
+    maxHp = Math.max(1, m.maxHealth);
+    label = `MIRROR · LV ${m.level}${m.cycleRound > 0 ? ` · CYCLE ${m.cycleRound}` : ""}`;
+  } else {
+    return;
+  }
   const frac = Math.min(1, hp / maxHp);
-  const enraged = c.enragedFlashed;
 
   // Bar dimensions
   const barW = Math.min(420, vw * 0.7);
@@ -2267,7 +2471,6 @@ export function drawBossHealthBar(
     '600 11px ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace';
   ctx.textBaseline = "middle";
   ctx.fillStyle = "rgba(245, 220, 220, 0.95)";
-  const label = `CENTIPEDE · LV ${c.level}${c.cycleRound > 0 ? ` · CYCLE ${c.cycleRound}` : ""}`;
   ctx.textAlign = "left";
   ctx.fillText(label, barX, barY - 10);
   ctx.textAlign = "right";
@@ -2321,11 +2524,23 @@ export function drawBossIndicator(
   vw: number,
   vh: number,
 ): void {
-  const c = world.centipede;
-  if (!c) return;
-  const head = c.head;
-  const sx = (head.x ?? 0) * world.camera.k + world.camera.x;
-  const sy = (head.y ?? 0) * world.camera.k + world.camera.y;
+  // Pick the active boss body — only one alive at a time.
+  let bossX = 0;
+  let bossY = 0;
+  if (world.centipede) {
+    bossX = world.centipede.head.x ?? 0;
+    bossY = world.centipede.head.y ?? 0;
+  } else if (world.hiveQueen) {
+    bossX = world.hiveQueen.body.x ?? 0;
+    bossY = world.hiveQueen.body.y ?? 0;
+  } else if (world.mirror) {
+    bossX = world.mirror.body.x ?? 0;
+    bossY = world.mirror.body.y ?? 0;
+  } else {
+    return;
+  }
+  const sx = bossX * world.camera.k + world.camera.x;
+  const sy = bossY * world.camera.k + world.camera.y;
   const padding = 36;
   const inside =
     sx >= padding && sx <= vw - padding && sy >= padding && sy <= vh - padding;
