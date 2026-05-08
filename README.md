@@ -1,36 +1,56 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Cytogenesis
 
-## Getting Started
+Roguelike cellular-automation game. Pilot a single mobile core node through a primordial sea (or proto-galactic medium); free-floating cells get captured by colliding with your graph and bond in via force-link edges. Adjacency between captured nodes runs a local-rule trait CA that produces emergent abilities.
 
-First, run the development server:
+Two themes (aquatic / galactic), two CA layers (environmental + trait), fully client-side.
+
+## Stack
+
+- Next.js 16 (App Router, Turbopack) + TypeScript + Tailwind 4
+- React 19.2
+- d3 (force, drag, zoom) for the entity graph
+- Canvas 2D for rendering — single context, layered draws
+- Custom velocity integrator + quadtree for ~500–1000 free agents
+- Zustand (live state) + idb (persistent meta-progression)
+- Vitest + jsdom for unit tests
+
+## Run
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+pnpm install
+pnpm dev      # http://localhost:3000
+pnpm test
+pnpm build
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Architecture
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Three independent simulation layers, never crossed:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+| Layer | Population | Mechanism | Tick |
+|---|---|---|---|
+| Entity graph | ≤80 nodes | d3-force + `forceLink` bonds | rAF |
+| Free agents | 500–1000 cells | custom integrator + quadtree | rAF |
+| Environmental CA | 128² toroidal grid | Conway B3/S23 | 4 Hz |
+| Trait CA | graph-local | recomputed on mutation only | on capture/loss |
 
-## Learn More
+Theme is paint, not logic — node-type IDs (`propulsion`, `sensor`, `membrane`, `mouth`, `stinger`, `chloroplast`, `mitochondrion`, `spore`, `core`) are theme-neutral and resolved through `src/data/themes.ts`. Determinism is enforced via a seeded PRNG (`src/lib/rng.ts`); every run's seed is surfaced in the summary.
 
-To learn more about Next.js, take a look at the following resources:
+## Phase tracker
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- [x] Phase 0 — scaffold, canvas, rAF loop, FPS HUD
+- [x] Phase 1 — d3 drag/zoom + core node + free cells
+- [x] Phase 2 — capture + graph growth
+- [x] Phase 3 — free-agent population + quadtree + arena wrap
+- [x] Phase 4 — environmental CA (Conway B3/S23 @ 4 Hz, 128² toroidal)
+- [x] Phase 5 — trait CA + abilities
+- [x] Phase 6 — predators, prune cascade, transcend@80 / death, run timer
+- [ ] Phase 7 — meta-progression (idb)
+- [ ] Phase 8 — both themes
+- [ ] Phase 9 — polish (Lenia, audio, mobile)
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+MVP = Phases 0–6.
 
-## Deploy on Vercel
+## License
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Private — all rights reserved.
