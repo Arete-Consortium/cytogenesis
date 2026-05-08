@@ -123,10 +123,37 @@ export type WorldEvent =
   | "bossEnrage"
   | "bossWindup"
   | "bossLunge"
+  | "editorOpen"
+  | "partPlaced"
   | `trait:${string}`
   | `biome:${number}`
   | `evolve:${number}`
   | `devolve:${number}`;
+
+/** A part the player chose to attach to their bell at the editor. */
+export interface PlacedPart {
+  id: string;
+  /** Organelle kind — drives glyph + behaviour hooks (visual only for now). */
+  kind: NodeTypeId;
+  /** Attachment angle in radians, world-space. -π..π. */
+  angle: number;
+  /** Tick at placement — used for a brief 'pop in' grow animation. */
+  placedAtTickN: number;
+}
+
+/** Per-run editor state. Open while the player picks + places a part. */
+export interface EditorState {
+  open: boolean;
+  /** Which kind the player picked from the offerings; null = still picking. */
+  selectedKind: NodeTypeId | null;
+  /** Three offerings drawn from unplaced types (or any if all placed). */
+  offerings: NodeTypeId[];
+  /** Stage that triggered this editor — prevents re-trigger. */
+  triggeredStage: number;
+}
+
+/** Maximum parts the player can attach in a run (one per slot around the bell). */
+const MAX_PLACED_PARTS = 8;
 
 /** Capture-combo tuning. */
 const COMBO_WINDOW_MS = 2000;
@@ -318,6 +345,10 @@ export class World {
   wallMs: number;
   /** Player-toggled pause. tick early-returns when true. */
   paused: boolean;
+  /** Body-editor — open between stages while the player picks/places a part. */
+  editor: EditorState;
+  /** Parts the player has attached to the bell this run (visible forever). */
+  placedParts: PlacedPart[];
   /** 0 (surface) → 3 (depth 60). Darkens the bg gradient as you descend. */
   biomeStage: number;
   /** Number of bosses killed this run — surfaced on the run summary. */
@@ -427,6 +458,13 @@ export class World {
     this.peakCaptured = 0;
     this.wallMs = 0;
     this.paused = false;
+    this.editor = {
+      open: false,
+      selectedKind: null,
+      offerings: [],
+      triggeredStage: -1,
+    };
+    this.placedParts = [];
     this.biomeStage = 0;
     this.bossesDefeated = 0;
     this.nextMilestoneIndex = 0;
@@ -1764,6 +1802,9 @@ export class World {
       this.evolutionStage = newStage;
       this.events.push(`evolve:${newStage}` as WorldEvent);
       this.addShake(10);
+      // Open the body editor — Spore-style. Player picks + places one
+      // organelle on the bell. World pauses until they do or skip.
+      this.openEditor(newStage);
     }
 
     // Combo detection.
@@ -1792,6 +1833,84 @@ export class World {
     this.emitSparkle(free.x ?? 0, free.y ?? 0, "rgba(160, 240, 255,");
     this.reheat(0.4);
     return null;
+  }
+
+  /**
+   * Open the body editor. Picks 3 part offerings (preferring kinds the
+   * player hasn't placed yet so each pick adds new flavor), pauses the
+   * world, and waits for the player to select + place or skip.
+   */
+  private openEditor(stage: number): void {
+    if (this.placedParts.length >= MAX_PLACED_PARTS) return;
+    if (this.editor.open) return;
+    const all: NodeTypeId[] = [
+      "propulsion",
+      "sensor",
+      "membrane",
+      "mouth",
+      "stinger",
+      "chloroplast",
+      "mitochondrion",
+      "spore",
+    ];
+    const placedKinds = new Set(this.placedParts.map((p) => p.kind));
+    const unplaced = all.filter((k) => !placedKinds.has(k));
+    const pool = unplaced.length >= 3 ? unplaced : all;
+    const local = [...pool];
+    const offerings: NodeTypeId[] = [];
+    for (let i = 0; i < 3 && local.length > 0; i++) {
+      const idx = Math.floor(this.rng.next() * local.length);
+      offerings.push(local.splice(idx, 1)[0]);
+    }
+    this.editor = {
+      open: true,
+      selectedKind: null,
+      offerings,
+      triggeredStage: stage,
+    };
+    this.paused = true;
+    this.events.push("editorOpen");
+  }
+
+  /** Player picked one of the 3 offerings. Next canvas tap places it. */
+  selectEditorPart(kind: NodeTypeId): void {
+    if (!this.editor.open) return;
+    if (!this.editor.offerings.includes(kind)) return;
+    this.editor.selectedKind = kind;
+  }
+
+  /**
+   * Player tapped the canvas while a part was selected. Convert tap →
+   * angle around the bell (using world coords), commit the part, and
+   * close the editor.
+   */
+  placeSelectedPart(worldX: number, worldY: number): void {
+    if (!this.editor.open) return;
+    const kind = this.editor.selectedKind;
+    if (kind == null) return;
+    const core = this.entityBodies[0];
+    const cx = core?.x ?? 0;
+    const cy = core?.y ?? 0;
+    const angle = Math.atan2(worldY - cy, worldX - cx);
+    this.placedParts.push({
+      id: newId("part"),
+      kind,
+      angle,
+      placedAtTickN: this.tickN,
+    });
+    this.events.push("partPlaced");
+    this.closeEditor();
+  }
+
+  /** Skip the editor without placing anything. */
+  closeEditor(): void {
+    this.editor = {
+      open: false,
+      selectedKind: null,
+      offerings: [],
+      triggeredStage: -1,
+    };
+    this.paused = false;
   }
 
   /**

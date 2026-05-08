@@ -1026,6 +1026,105 @@ export function drawBodies(
     drawCell(ctx, b, world.tickN, b.id === hovered, b.id === dragging);
   }
   if (core) drawCore(ctx, world, core);
+  drawPlacedParts(ctx, world);
+  drawEditorOverlay(ctx, world);
+}
+
+/**
+ * Draw placed parts attached around the bell perimeter. Each part
+ * renders the existing per-type glyph at a smaller radius, anchored
+ * at world.placedParts[i].angle relative to the core. Parts placed
+ * within the last 30 ticks scale up from 0 → 1 for a "pop in" feel.
+ */
+function drawPlacedParts(ctx: CanvasRenderingContext2D, world: World): void {
+  if (world.placedParts.length === 0) return;
+  const core = world.entityBodies[0];
+  if (!core) return;
+  const cx = core.x ?? 0;
+  const cy = core.y ?? 0;
+  const cr = core.radius;
+  for (const part of world.placedParts) {
+    const age = world.tickN - part.placedAtTickN;
+    const popIn = age < 30 ? Math.min(1, age / 30) : 1;
+    // Eased ease-out
+    const e = 1 - (1 - popIn) * (1 - popIn);
+    const partR = (cr * 0.42) * e;
+    const radial = cr * 1.05;
+    const px = cx + Math.cos(part.angle) * radial;
+    const py = cy + Math.sin(part.angle) * radial;
+    // Subtle attachment ligament — a short chitin line from bell edge
+    // to the part body so it reads as ANCHORED, not floating.
+    ctx.strokeStyle = "rgba(255,240,210,0.45)";
+    ctx.lineWidth = Math.max(1, partR * 0.18);
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(part.angle) * cr * 0.92, cy + Math.sin(part.angle) * cr * 0.92);
+    ctx.lineTo(px, py);
+    ctx.stroke();
+    // Synthetic body for the per-type drawer.
+    const synthetic: Body = {
+      id: part.id,
+      type: part.kind,
+      kind: "captured",
+      radius: partR,
+      x: px,
+      y: py,
+      vx: Math.cos(part.angle) * 2,
+      vy: Math.sin(part.angle) * 2,
+    };
+    BODY_HALO(ctx, px, py, partR, currentTheme().nodeColors[part.kind], 0.5);
+    SHAPE_DRAWERS[part.kind](ctx, synthetic, world.tickN);
+  }
+}
+
+/**
+ * In-world editor overlay — pulsing placement ring around the bell
+ * while the player has a part selected and is choosing where to attach.
+ * The 3-card UI lives in React (BodyEditor.tsx); this is just the
+ * spatial cue inside the canvas.
+ */
+function drawEditorOverlay(ctx: CanvasRenderingContext2D, world: World): void {
+  if (!world.editor.open) return;
+  const core = world.entityBodies[0];
+  if (!core) return;
+  const cx = core.x ?? 0;
+  const cy = core.y ?? 0;
+  const cr = core.radius;
+  const t = world.tickN;
+  // While picking — soft cyan glow ring tells player the world is
+  // paused for choice. After picking, the ring goes pulsing white +
+  // shows a tap prompt arc.
+  if (world.editor.selectedKind == null) {
+    const pulse = 0.5 + 0.3 * Math.sin(t * 0.12);
+    ctx.strokeStyle = `rgba(120, 220, 255, ${pulse.toFixed(3)})`;
+    ctx.lineWidth = 2;
+    ctx.setLineDash([6, 6]);
+    ctx.lineDashOffset = -t * 0.5;
+    ctx.beginPath();
+    ctx.arc(cx, cy, cr * 1.55, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  } else {
+    // Active placement — bright pulsing ring + "tap to place" arc.
+    const pulse = 0.6 + 0.4 * Math.sin(t * 0.22);
+    ctx.strokeStyle = `rgba(255, 240, 200, ${pulse.toFixed(3)})`;
+    ctx.lineWidth = 2.4;
+    ctx.setLineDash([10, 6]);
+    ctx.lineDashOffset = -t * 1.2;
+    ctx.beginPath();
+    ctx.arc(cx, cy, cr * 1.4, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    // Faint glyph at 8 cardinal directions hinting placement freedom.
+    ctx.fillStyle = `rgba(255, 240, 200, ${(pulse * 0.55).toFixed(3)})`;
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2;
+      const gx = cx + Math.cos(a) * cr * 1.4;
+      const gy = cy + Math.sin(a) * cr * 1.4;
+      ctx.beginPath();
+      ctx.arc(gx, gy, 3.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
 }
 
 /* ─── Predator (anglerfish) ──────────────────────────────────────── */
