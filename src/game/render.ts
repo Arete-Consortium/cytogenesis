@@ -704,7 +704,90 @@ function drawCore(ctx: CanvasRenderingContext2D, world: World, core: Body): void
   ctx.ellipse(-rr * 0.25, -rr * 0.5, rr * 0.4, rr * 0.13, -0.2, 0, Math.PI * 2);
   ctx.fill();
 
+  // ── Stage-driven wild visuals ─────────────────────────────────────
+  const stage = world.evolutionStage;
+
+  // Stage 3+: full-perimeter spikes (sea-urchin look)
+  if (stage >= 3) {
+    const N = 16;
+    const fillC = currentTheme().nodeColors.stinger;
+    ctx.fillStyle = fillC;
+    for (let i = 0; i < N; i++) {
+      const a = (i / N) * Math.PI * 2;
+      const baseR = rr * 1.18;
+      const tipR = rr * (1.4 + 0.05 * Math.sin(t * 0.06 + i));
+      const px = -Math.sin(a);
+      const py = Math.cos(a);
+      const w = rr * 0.07;
+      ctx.beginPath();
+      ctx.moveTo(Math.cos(a) * baseR + px * w, Math.sin(a) * baseR + py * w);
+      ctx.lineTo(Math.cos(a) * tipR, Math.sin(a) * tipR);
+      ctx.lineTo(Math.cos(a) * baseR - px * w, Math.sin(a) * baseR - py * w);
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+
+  // Stage 4+: nested inner sub-bell that pulses on a different beat
+  if (stage >= 4) {
+    const innerR = rr * (0.45 + 0.05 * Math.sin(t * 0.07));
+    const innerGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, innerR);
+    innerGrad.addColorStop(0, T.bell.bellInner);
+    innerGrad.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = innerGrad;
+    ctx.beginPath();
+    ctx.arc(0, 0, innerR, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
   ctx.restore();
+
+  // Stage 1+: outer halo ring (drawn outside rotation in world space)
+  if (stage >= 1) {
+    const ringR = rr * 1.55 + 4 * Math.sin(t * 0.05);
+    ctx.strokeStyle = T.bell.halo0;
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.arc(x, y, ringR, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // Stage 2+: secondary halos at offset positions (chaotic field)
+  if (stage >= 2) {
+    for (let i = 0; i < 3; i++) {
+      const phase = t * 0.03 + i * 2.1;
+      const ox = Math.cos(phase) * rr * 1.2;
+      const oy = Math.sin(phase) * rr * 1.2;
+      const subR = rr * 0.3;
+      const halo = ctx.createRadialGradient(x + ox, y + oy, 0, x + ox, y + oy, subR);
+      halo.addColorStop(0, T.bell.halo0);
+      halo.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.fillStyle = halo;
+      ctx.beginPath();
+      ctx.arc(x + ox, y + oy, subR, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  // Stage 5: transcend corona — radial light beams
+  if (stage >= 5) {
+    const beams = 12;
+    for (let i = 0; i < beams; i++) {
+      const a = (i / beams) * Math.PI * 2 + t * 0.01;
+      const len = rr * (3.5 + 0.5 * Math.sin(t * 0.04 + i));
+      const x2 = x + Math.cos(a) * len;
+      const y2 = y + Math.sin(a) * len;
+      const grad = ctx.createLinearGradient(x, y, x2, y2);
+      grad.addColorStop(0, T.bell.bellInner);
+      grad.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.strokeStyle = grad;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+    }
+  }
 
   // Spore swarmlings — small dots orbiting the bell at radius rr*1.55,
   // count = absorbed spores. Drawn outside the rotation transform so

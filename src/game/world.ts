@@ -66,6 +66,45 @@ const FREE_POOL: NodeTypeId[] = [
   "spore",
 ];
 
+/**
+ * Biome ecosystem weights — relative spawn probability per type per
+ * depth. Surface (stage 0) leans toward easy prey; abyss (stage 3+)
+ * leans defensive + hostile so the player's build choices matter.
+ */
+const BIOME_WEIGHTS: Record<NodeTypeId, number>[] = [
+  // Stage 0 — surface: lots of food, little defense
+  { core: 0, propulsion: 4, sensor: 3, membrane: 1, mouth: 2, stinger: 1, chloroplast: 3, mitochondrion: 1, spore: 2 },
+  // Stage 1 — twilight
+  { core: 0, propulsion: 3, sensor: 3, membrane: 2, mouth: 2, stinger: 2, chloroplast: 2, mitochondrion: 2, spore: 2 },
+  // Stage 2 — midnight: balanced
+  { core: 0, propulsion: 2, sensor: 2, membrane: 3, mouth: 2, stinger: 3, chloroplast: 1, mitochondrion: 2, spore: 2 },
+  // Stage 3 — abyss: scarce + dangerous
+  { core: 0, propulsion: 1, sensor: 2, membrane: 4, mouth: 1, stinger: 4, chloroplast: 1, mitochondrion: 3, spore: 1 },
+];
+
+/**
+ * Per-type skittishness — multiplier on the fear response when prey
+ * detect the bell or a predator nearby. 0 = unflinching, 2 = manic
+ * fluttering.
+ */
+const FEAR_BY_TYPE: Record<NodeTypeId, number> = {
+  core: 0,
+  propulsion: 1.7, // twitchy fast prey
+  sensor: 1.5,    // alert
+  spore: 1.0,
+  mouth: 0.6,
+  chloroplast: 0.8,
+  mitochondrion: 0.7,
+  stinger: 0.9,   // counter-attacker
+  membrane: 0.4,  // sluggish
+};
+/** Bell fear range — cells inside accelerate away from the bell. */
+const FEAR_RANGE_BELL = 110;
+/** Predator fear range — cells inside scatter from predators. */
+const FEAR_RANGE_PRED = 140;
+/** Per-tick acceleration scaling for fear response. */
+const FEAR_ACCEL = 0.55;
+
 /** Events the world emits each tick — drained by the React layer. */
 export type WorldEvent =
   | "capture"
@@ -311,8 +350,25 @@ export class World {
    *  - biasToAlive: try to land inside a CA live zone first; if the
    *             grid is mostly dead, fall back to edge spawn
    */
+  /** Pick a NodeTypeId from the current biome weights. */
+  private pickBiomeType(): NodeTypeId {
+    // biomeStage may not yet be initialized when this fires from the
+    // constructor's initial scatter loop. Default to stage 0.
+    const stage = Math.min(this.biomeStage ?? 0, BIOME_WEIGHTS.length - 1);
+    const weights = BIOME_WEIGHTS[stage] ?? BIOME_WEIGHTS[0];
+    let total = 0;
+    for (const t of FREE_POOL) total += weights[t] ?? 0;
+    if (total <= 0) return this.rng.pick(FREE_POOL);
+    let r = this.rng.next() * total;
+    for (const t of FREE_POOL) {
+      r -= weights[t] ?? 0;
+      if (r <= 0) return t;
+    }
+    return FREE_POOL[FREE_POOL.length - 1];
+  }
+
   private spawnFree(opts: { onEdge?: boolean; biasToAlive?: boolean } = {}): Body {
-    const type = this.rng.pick(FREE_POOL);
+    const type = this.pickBiomeType();
     const a = this.arenaHalf;
     let x: number;
     let y: number;
@@ -823,6 +879,8 @@ export class World {
     const cx = core?.x ?? 0;
     const cy = core?.y ?? 0;
     const PULL_SPEED = 6;
+    const FEAR_R2_BELL = FEAR_RANGE_BELL * FEAR_RANGE_BELL;
+    const FEAR_R2_PRED = FEAR_RANGE_PRED * FEAR_RANGE_PRED;
     for (const b of this.freeBodies) {
       if (b.magnetized) {
         const dx = cx - (b.x ?? 0);
@@ -840,10 +898,42 @@ export class World {
       let vy = b.vy ?? 0;
       vx += (this.rng.next() - 0.5) * JITTER;
       vy += (this.rng.next() - 0.5) * JITTER;
+      // Fear response — accelerate AWAY from the bell + nearby
+      // predators if within range, scaled by per-type skittishness.
+      const fearMul = FEAR_BY_TYPE[b.type] ?? 1;
+      if (fearMul > 0) {
+        const bx = b.x ?? 0;
+        const by = b.y ?? 0;
+        // Bell fear
+        const dxb = bx - cx;
+        const dyb = by - cy;
+        const d2b = dxb * dxb + dyb * dyb;
+        if (d2b < FEAR_R2_BELL && d2b > 0.5) {
+          const d = Math.sqrt(d2b);
+          const t = 1 - d / FEAR_RANGE_BELL;
+          vx += (dxb / d) * FEAR_ACCEL * t * fearMul;
+          vy += (dyb / d) * FEAR_ACCEL * t * fearMul;
+        }
+        // Predator fear (scan all predators — list is small).
+        for (const p of this.predators) {
+          const dxp = bx - (p.x ?? 0);
+          const dyp = by - (p.y ?? 0);
+          const d2p = dxp * dxp + dyp * dyp;
+          if (d2p < FEAR_R2_PRED && d2p > 0.5) {
+            const d = Math.sqrt(d2p);
+            const t = 1 - d / FEAR_RANGE_PRED;
+            vx += (dxp / d) * FEAR_ACCEL * t * fearMul * 0.8;
+            vy += (dyp / d) * FEAR_ACCEL * t * fearMul * 0.8;
+          }
+        }
+      }
       const sp = Math.hypot(vx, vy);
-      if (sp > MAX_FREE_SPEED) {
-        vx = (vx / sp) * MAX_FREE_SPEED;
-        vy = (vy / sp) * MAX_FREE_SPEED;
+      // Cells can briefly exceed MAX_FREE_SPEED when fleeing —
+      // gives a real "panic flutter" feel.
+      const maxNow = MAX_FREE_SPEED * 1.6;
+      if (sp > maxNow) {
+        vx = (vx / sp) * maxNow;
+        vy = (vy / sp) * maxNow;
       }
       let x = (b.x ?? 0) + vx * scale;
       let y = (b.y ?? 0) + vy * scale;
