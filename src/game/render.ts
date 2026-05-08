@@ -1566,64 +1566,31 @@ function drawCentipede(ctx: CanvasRenderingContext2D, world: World): void {
   // Width at body position u: gentle taper to the tail (60% width at u=1).
   const widthAt = (u: number) => bodyHalfWidth * (1 - 0.4 * u);
 
-  // ── Legs — drawn FIRST (behind the body). Many pairs along the body,
-  // each pair longer toward the rear, with white/dark band pattern
-  // and a knee bend.
-  const LEG_PAIRS = Math.min(samples.length - 2, 14);
+  // ── Cilia — short flagella-like hairs along both sides of the body.
+  // Drawn BEFORE the body so they sit underneath. Bacteria, not bugs.
+  const CILIA_PAIRS = Math.min(samples.length - 2, 28);
   ctx.lineCap = "round";
-  for (let i = 1; i <= LEG_PAIRS; i++) {
-    const idx = Math.round(((i - 0.5) / LEG_PAIRS) * (samples.length - 2));
+  ctx.strokeStyle = P.legShade;
+  ctx.lineWidth = 1;
+  for (let i = 1; i <= CILIA_PAIRS; i++) {
+    const idx = Math.round(((i - 0.5) / CILIA_PAIRS) * (samples.length - 2));
     const sp = samples[idx];
     if (!sp) continue;
-    // Length grows from 1.6× hr at the front to 3.0× hr at the rear.
-    const lenScale = 1.6 + sp.u * 1.4;
-    const len = hr * lenScale;
-    // Walking wave — opposite phase per side; pairs offset.
-    const phase = t * 0.16 + i * 0.5;
+    // Wave along the body so cilia look propulsive.
+    const wave = Math.sin(t * 0.22 + i * 0.7);
+    const len = hr * (0.55 + wave * 0.18);
     for (const side of [-1, 1]) {
-      const wag = Math.sin(phase + side * 1.1) * 0.18;
-      // Kneed leg: out perpendicular, then bent slightly back toward tail.
       const baseX = sp.x + sp.nx * side * widthAt(sp.u) * 0.95;
       const baseY = sp.y + sp.ny * side * widthAt(sp.u) * 0.95;
-      const kneeOut = (0.55 + wag) * len;
-      const kneeBack = -0.15 * len; // bend tucks back along body
-      const kx = baseX + sp.nx * side * kneeOut + sp.tx * kneeBack;
-      const ky = baseY + sp.ny * side * kneeOut + sp.ty * kneeBack;
-      const tipOut = (1.0 + wag * 0.6) * len;
-      const tipBack = -0.35 * len;
-      const tipX = baseX + sp.nx * side * tipOut + sp.tx * tipBack;
-      const tipY = baseY + sp.ny * side * tipOut + sp.ty * tipBack;
-
-      // Stroke whole leg as a thin pale base, then overlay banded segments.
-      ctx.strokeStyle = P.legShade;
-      ctx.lineWidth = 1.6;
+      // Cilia tip swept slightly backward along travel direction.
+      const tipX =
+        baseX + sp.nx * side * len * (0.85 + wave * 0.15) - sp.tx * len * 0.18;
+      const tipY =
+        baseY + sp.ny * side * len * (0.85 + wave * 0.15) - sp.ty * len * 0.18;
       ctx.beginPath();
       ctx.moveTo(baseX, baseY);
-      ctx.quadraticCurveTo(kx, ky, tipX, tipY);
+      ctx.lineTo(tipX, tipY);
       ctx.stroke();
-
-      // Banding: alternate pale/dark short segments along the curve.
-      const BANDS = 6;
-      for (let bi = 0; bi < BANDS; bi++) {
-        const f0 = bi / BANDS;
-        const f1 = (bi + 1) / BANDS;
-        // Quadratic-bezier point sampler.
-        const sample = (f: number) => {
-          const omf = 1 - f;
-          return {
-            x: omf * omf * baseX + 2 * omf * f * kx + f * f * tipX,
-            y: omf * omf * baseY + 2 * omf * f * ky + f * f * tipY,
-          };
-        };
-        const p0 = sample(f0);
-        const p1 = sample(f1);
-        ctx.strokeStyle = bi % 2 === 0 ? P.legBandPale : P.legBandDark;
-        ctx.lineWidth = 1.4 - f0 * 0.4; // taper toward tip
-        ctx.beginPath();
-        ctx.moveTo(p0.x, p0.y);
-        ctx.lineTo(p1.x, p1.y);
-        ctx.stroke();
-      }
     }
   }
 
@@ -1733,49 +1700,18 @@ function drawCentipede(ctx: CanvasRenderingContext2D, world: World): void {
     }
   }
 
-  // ── Cerci — long banded tail filaments at the rear ──────────────
-  if (samples.length >= 2) {
-    const tail = samples[samples.length - 1];
-    const tailW = widthAt(tail.u);
-    const cerciLen = hr * 2.6;
-    for (const side of [-1, 1]) {
-      const wag = Math.sin(t * 0.10 + side * 0.7) * 0.15;
-      const baseX = tail.x + tail.nx * side * tailW * 0.55 - tail.tx * tailW * 0.4;
-      const baseY = tail.y + tail.ny * side * tailW * 0.55 - tail.ty * tailW * 0.4;
-      const ctrlX = baseX - tail.tx * cerciLen * 0.6 + tail.nx * side * cerciLen * (0.35 + wag);
-      const ctrlY = baseY - tail.ty * cerciLen * 0.6 + tail.ny * side * cerciLen * (0.35 + wag);
-      const tipX = baseX - tail.tx * cerciLen * 1.0 + tail.nx * side * cerciLen * (0.55 + wag * 1.2);
-      const tipY = baseY - tail.ty * cerciLen * 1.0 + tail.ny * side * cerciLen * (0.55 + wag * 1.2);
-      // Banded segments
-      const BANDS = 8;
-      for (let bi = 0; bi < BANDS; bi++) {
-        const f0 = bi / BANDS;
-        const f1 = (bi + 1) / BANDS;
-        const sample = (f: number) => {
-          const omf = 1 - f;
-          return {
-            x: omf * omf * baseX + 2 * omf * f * ctrlX + f * f * tipX,
-            y: omf * omf * baseY + 2 * omf * f * ctrlY + f * f * tipY,
-          };
-        };
-        const p0 = sample(f0);
-        const p1 = sample(f1);
-        ctx.strokeStyle = bi % 2 === 0 ? P.cerciPale : P.cerciDark;
-        ctx.lineWidth = 1.6 - f0 * 0.6;
-        ctx.beginPath();
-        ctx.moveTo(p0.x, p0.y);
-        ctx.lineTo(p1.x, p1.y);
-        ctx.stroke();
-      }
-    }
-  }
+  // ── Tail — smooth taper to a point. Spirochetes have no cerci. ──
+  // The body ribbon already tapers via widthAt(); skip the legacy
+  // banded filaments entirely.
 
-  // ── Head — armored teardrop with antennae + mandibles + bead eyes
+  // ── Head — tapered cell pole, no jaws or eyes (bacteria don't have
+  // them). One or two longer polar flagella sweep forward to suggest
+  // motility direction.
   const hx = head.x ?? 0;
   const hy = head.y ?? 0;
   const angle = Math.atan2(head.vy ?? 0, head.vx ?? 0) || 0;
 
-  // Windup jitter — head trembles before the strike.
+  // Windup jitter — cell trembles before the strike.
   const jitterX = phase === "windup" ? Math.sin(t * 1.7) * 1.6 * phaseProgress : 0;
   const jitterY = phase === "windup" ? Math.cos(t * 2.1) * 1.6 * phaseProgress : 0;
 
@@ -1783,7 +1719,7 @@ function drawCentipede(ctx: CanvasRenderingContext2D, world: World): void {
   ctx.translate(hx + jitterX, hy + jitterY);
   ctx.rotate(angle);
 
-  // Enraged red glow under the head shell.
+  // Enraged red glow at the cell pole.
   if (isEnraged) {
     const glow = ctx.createRadialGradient(0, 0, hr * 0.3, 0, 0, hr * 1.4);
     glow.addColorStop(0, "rgba(255, 70, 50, 0.55)");
@@ -1794,95 +1730,59 @@ function drawCentipede(ctx: CanvasRenderingContext2D, world: World): void {
     ctx.fill();
   }
 
-  // Antennae — long banded waving filaments forward
-  const antLen = hr * 3.2;
+  // Polar flagella — two longer single-strand whips forward, swept
+  // by the bacterium's motion. Smooth pale curves, no banding.
+  const flagLen = hr * 2.6;
+  ctx.lineCap = "round";
+  ctx.strokeStyle = P.antennaPale;
+  ctx.lineWidth = 1.3;
   for (const side of [-1, 1]) {
-    const tw = Math.sin(t * 0.10 + side * 0.9) * 0.4;
+    const tw = Math.sin(t * 0.18 + side * 0.9) * 0.5;
     const baseX = hr * 0.35;
-    const baseY = side * hr * 0.35;
-    const ctrlX = hr * 1.6;
-    const ctrlY = side * (hr * 1.0 + tw * 4);
-    const tipX = hr * 0.35 + antLen;
-    const tipY = side * (hr * 0.4 + tw * 8);
-    const BANDS = 10;
-    for (let bi = 0; bi < BANDS; bi++) {
-      const f0 = bi / BANDS;
-      const f1 = (bi + 1) / BANDS;
-      const sample = (f: number) => {
-        const omf = 1 - f;
-        return {
-          x: omf * omf * baseX + 2 * omf * f * ctrlX + f * f * tipX,
-          y: omf * omf * baseY + 2 * omf * f * ctrlY + f * f * tipY,
-        };
-      };
-      const p0 = sample(f0);
-      const p1 = sample(f1);
-      ctx.strokeStyle = bi % 2 === 0 ? P.antennaPale : P.antennaDark;
-      ctx.lineWidth = 1.4 - f0 * 0.7;
-      ctx.beginPath();
-      ctx.moveTo(p0.x, p0.y);
-      ctx.lineTo(p1.x, p1.y);
-      ctx.stroke();
-    }
-  }
-
-  // Head shell — pale tan, tinted reddish when enraged
-  const headFill = isEnraged ? "#d8907a" : P.bodyPale;
-  const headRim = isEnraged ? "#7a3220" : P.bodyShade;
-  ctx.fillStyle = headFill;
-  ctx.beginPath();
-  ctx.ellipse(hr * 0.1, 0, hr * 0.95, hr * 0.7, 0, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.strokeStyle = headRim;
-  ctx.lineWidth = 1.4;
-  ctx.stroke();
-  // Two head stripes (continuation of the body lines)
-  ctx.strokeStyle = isEnraged ? "#3a0808" : P.stripeDark;
-  ctx.lineWidth = 1.2;
-  for (const off of [-hr * 0.3, hr * 0.3]) {
+    const baseY = side * hr * 0.18;
+    const ctrlX = hr * 1.4;
+    const ctrlY = side * (hr * 0.55 + tw * 5);
+    const tipX = hr * 0.35 + flagLen;
+    const tipY = side * (hr * 0.25 + tw * 9);
     ctx.beginPath();
-    ctx.moveTo(-hr * 0.35, off);
-    ctx.lineTo(hr * 0.7, off * 0.85);
+    ctx.moveTo(baseX, baseY);
+    ctx.quadraticCurveTo(ctrlX, ctrlY, tipX, tipY);
+    ctx.stroke();
+  }
+  // Subtle dark inner stroke for definition
+  ctx.strokeStyle = `rgba(40, 40, 20, 0.5)`;
+  ctx.lineWidth = 0.7;
+  for (const side of [-1, 1]) {
+    const tw = Math.sin(t * 0.18 + side * 0.9) * 0.5;
+    const baseX = hr * 0.35;
+    const baseY = side * hr * 0.18;
+    const ctrlX = hr * 1.4;
+    const ctrlY = side * (hr * 0.55 + tw * 5);
+    const tipX = hr * 0.35 + flagLen;
+    const tipY = side * (hr * 0.25 + tw * 9);
+    ctx.beginPath();
+    ctx.moveTo(baseX, baseY);
+    ctx.quadraticCurveTo(ctrlX, ctrlY, tipX, tipY);
     ctx.stroke();
   }
 
-  // Mandibles — flare wider during windup + lunge.
-  const flare = phase === "windup" ? phaseProgress * 0.5 : phase === "lunge" ? 0.65 : 0;
-  for (const side of [-1, 1]) {
-    const grd = ctx.createLinearGradient(hr * 0.7, 0, hr * 1.15, 0);
-    grd.addColorStop(0, P.mandible);
-    grd.addColorStop(1, P.mandibleTip);
-    ctx.fillStyle = grd;
-    ctx.beginPath();
-    const fy = (1 + flare) * side;
-    ctx.moveTo(hr * 0.7, hr * 0.18 * fy);
-    ctx.quadraticCurveTo(
-      hr * (1.0 + flare * 0.15),
-      hr * 0.32 * fy,
-      hr * (1.15 + flare * 0.2),
-      hr * 0.08 * fy,
-    );
-    ctx.quadraticCurveTo(
-      hr * 0.95,
-      hr * 0.2 * fy,
-      hr * 0.78,
-      hr * 0.1 * fy,
-    );
-    ctx.closePath();
-    ctx.fill();
-  }
-
-  // Tiny black bead eyes (house centipedes have small simple eyes)
-  for (const ey of [-hr * 0.3, hr * 0.3]) {
-    ctx.fillStyle = P.eyeShine;
-    ctx.beginPath();
-    ctx.arc(hr * 0.05, ey, hr * 0.08, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = "rgba(255,255,255,0.6)";
-    ctx.beginPath();
-    ctx.arc(hr * 0.07, ey - hr * 0.025, hr * 0.025, 0, Math.PI * 2);
-    ctx.fill();
-  }
+  // Cell pole — tapered tip (the body ribbon already tapers smoothly,
+  // but the head needs a soft cap to match the bacterial cylindrical
+  // shape).  We draw a short ellipsoidal cap aligned with the body.
+  const headFill = isEnraged ? "#d8907a" : P.bodyMid;
+  const headRim = isEnraged ? "#7a3220" : P.bodyShade;
+  ctx.fillStyle = headFill;
+  ctx.beginPath();
+  ctx.ellipse(hr * 0.1, 0, hr * 0.55, hr * 0.45, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = headRim;
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  // Inner highlight — DNA bundle / nucleoid suggestion
+  ctx.fillStyle = isEnraged ? "rgba(180, 40, 40, 0.5)" : "rgba(60, 80, 30, 0.5)";
+  ctx.beginPath();
+  ctx.ellipse(hr * 0.05, 0, hr * 0.3, hr * 0.18, 0, 0, Math.PI * 2);
+  ctx.fill();
 
   ctx.restore();
 }

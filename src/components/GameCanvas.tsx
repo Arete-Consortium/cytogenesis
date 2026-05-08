@@ -518,20 +518,21 @@ export default function GameCanvas() {
             queueToast("BOSS · INCOMING");
           }
           else if (ev === "killBoss") {
-            audio.transcend();
+            audio.killBoss();
             queueToast("BOSS DEFEATED");
           }
           else if (ev === "bossEnrage") {
-            audio.transcend();
+            audio.bossEnrage();
             queueToast("ENRAGED");
           }
           else if (ev === "bossWindup") {
             audio.telegraph();
           }
           else if (ev === "bossLunge") {
-            audio.hit();
+            audio.bossLunge();
           }
           else if (ev === "lungeHit") {
+            audio.bossLunge();
             audio.hit();
             queueToast("LUNGE HIT");
           }

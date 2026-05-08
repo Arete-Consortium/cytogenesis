@@ -196,6 +196,56 @@ class AudioBus {
     this.tone({ freq: 990, durMs: 200, volume: 0.07, type: "sine", endFreq: 1480, delay: 0.04 });
     this.noise({ durMs: 80, volume: 0.04, freq: 5000, endFreq: 7000, Q: 5, delay: 0.04 });
   }
+
+  // ── Metal-flavored combat stings ──────────────────────────────────
+
+  /**
+   * Boss lunge — heavy snare crack. Layered noise burst with a
+   * dropping pitch over a thick low thump for the kick + snare body.
+   */
+  bossLunge(): void {
+    // Kick body
+    this.tone({ freq: 90, durMs: 120, volume: 0.35, type: "sine", endFreq: 40 });
+    // Snare crack — high-Q noise burst dropping in pitch
+    this.noise({ durMs: 110, volume: 0.32, freq: 3500, endFreq: 1200, Q: 1.4, filter: "bandpass" });
+    // Distorted body — square dropping fast
+    this.tone({ freq: 280, durMs: 80, volume: 0.18, type: "square", endFreq: 110 });
+    // Tail rumble
+    this.noise({ durMs: 220, volume: 0.08, freq: 600, endFreq: 100, Q: 0.8, filter: "lowpass", delay: 0.04 });
+  }
+
+  /**
+   * Boss enrage — distorted power chord swell. Detuned saw triad
+   * with a slow filter-opening for the "guitar revs up" feel.
+   */
+  bossEnrage(): void {
+    // Power chord: root + 5th, detuned for dirt
+    this.fatTone({ freq: 110, durMs: 1200, volume: 0.20, type: "sawtooth" });
+    this.fatTone({ freq: 165, durMs: 1200, volume: 0.16, type: "sawtooth" });
+    this.fatTone({ freq: 220, durMs: 1200, volume: 0.14, type: "sawtooth" });
+    // Octave on top for bite
+    this.tone({ freq: 440, durMs: 1000, volume: 0.10, type: "square", delay: 0.05 });
+    // Cymbal-like white noise wash, slowly opening
+    this.noise({ durMs: 900, volume: 0.10, freq: 3000, endFreq: 8000, Q: 1.5 });
+    // Sub thump on the front edge
+    this.tone({ freq: 60, durMs: 250, volume: 0.30, type: "sine", endFreq: 35 });
+  }
+
+  /**
+   * Boss kill — crash cymbal + drum hit + descending power chord.
+   * Big "the riff just landed" celebration sting.
+   */
+  killBoss(): void {
+    // Crash — broadband noise opening fast then long decay
+    this.noise({ durMs: 700, volume: 0.22, freq: 4000, endFreq: 10000, Q: 0.8 });
+    // Heavy kick
+    this.tone({ freq: 80, durMs: 180, volume: 0.36, type: "sine", endFreq: 30 });
+    // Power chord drop — root + 5th in major-third interval
+    this.fatTone({ freq: 196, durMs: 700, volume: 0.20, type: "sawtooth", endFreq: 130 });
+    this.fatTone({ freq: 294, durMs: 700, volume: 0.16, type: "sawtooth", endFreq: 196 });
+    // Snare crack mid
+    this.noise({ durMs: 100, volume: 0.20, freq: 2800, endFreq: 1000, Q: 1.6, filter: "bandpass", delay: 0.06 });
+  }
 }
 
 export const audio = new AudioBus();
