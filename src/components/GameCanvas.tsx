@@ -42,6 +42,10 @@ interface FrameStats {
   peakCaptured: number;
   /** True only after the slow-mo transition finishes — overlay can show. */
   overlayReady: boolean;
+  /** Active combo chain length (sliding window). */
+  comboCount: number;
+  /** True while the combo buff is active (post-trigger window). */
+  comboActive: boolean;
 }
 
 const formatDuration = (ms: number): string => {
@@ -133,6 +137,8 @@ export default function GameCanvas() {
     runDurationMs: 0,
     peakCaptured: 1,
     overlayReady: false,
+    comboCount: 0,
+    comboActive: false,
   });
 
   // Helper accessible inside the rAF loop to push a centered toast.
@@ -355,7 +361,7 @@ export default function GameCanvas() {
       world.tick(dt);
       world.captureNearby();
 
-      drawBackground(ctx, width, height, world.tickN);
+      drawBackground(ctx, width, height, world.tickN, world.biomeStage);
       drawAmbientPlankton(ctx, width, height, world.tickN);
       ctx.save();
       applyCamera(ctx, world, dpr);
@@ -432,6 +438,8 @@ export default function GameCanvas() {
           runDurationMs: ended,
           peakCaptured: world.peakCaptured,
           overlayReady,
+          comboCount: world.comboChain(),
+          comboActive: world.wallMs < world.comboActiveUntilMs,
         });
         fpsAccum = 0;
         lastStatPush = t;
@@ -481,6 +489,17 @@ export default function GameCanvas() {
           <span className="text-cyan-300">{stats.captured}</span>
           <span className="text-zinc-600"> bonded</span>
         </div>
+        {(stats.comboActive || stats.comboCount >= 2) && (
+          <div
+            className={`rounded-full px-2 py-0.5 text-[10px] font-semibold tracking-wide ${
+              stats.comboActive
+                ? "bg-amber-300/15 text-amber-200 ring-1 ring-amber-300/40"
+                : "bg-cyan-300/10 text-cyan-200/85 ring-1 ring-cyan-300/25"
+            }`}
+          >
+            {stats.comboActive ? "BUFF" : `×${stats.comboCount}`}
+          </div>
+        )}
         {traitList.length > 0 && (
           <div className="flex flex-wrap justify-end gap-1">
             {traitList.map((id) => (

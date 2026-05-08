@@ -9,17 +9,26 @@ import { currentTheme } from "@/data/themes";
  * "sunlight from the surface filtering down". The eye reads vertical
  * value-difference as depth.
  */
+/** Darken a #rrggbb hex by `factor` (0..1, where 1 = unchanged). */
+function darkenHex(hex: string, factor: number): string {
+  const [r, g, b] = parseHex(hex);
+  return `rgb(${Math.round(r * factor)}, ${Math.round(g * factor)}, ${Math.round(b * factor)})`;
+}
+
 export function drawBackground(
   ctx: CanvasRenderingContext2D,
   width: number,
   height: number,
   tickN = 0,
+  biomeStage = 0,
 ): void {
   const T = currentTheme();
+  // Darken progressively as the player descends through biome milestones.
+  const dark = 1 - Math.min(biomeStage, 3) * 0.18;
   const depth = ctx.createLinearGradient(0, 0, 0, height);
-  depth.addColorStop(0, T.bg[0]);
-  depth.addColorStop(0.45, T.bg[1]);
-  depth.addColorStop(1, T.bg[2]);
+  depth.addColorStop(0, darkenHex(T.bg[0], dark));
+  depth.addColorStop(0.45, darkenHex(T.bg[1], dark));
+  depth.addColorStop(1, darkenHex(T.bg[2], dark));
   ctx.fillStyle = depth;
   ctx.fillRect(0, 0, width, height);
 
@@ -430,6 +439,38 @@ function entityComposition(bodies: Body[]): Record<string, number> {
   return counts;
 }
 
+/** Parse rgba(r, g, b[, a]) → [r, g, b, a]. */
+function parseRgba(s: string): [number, number, number, number] | null {
+  const m = s.match(/rgba?\(([^)]+)\)/);
+  if (!m) return null;
+  const parts = m[1].split(",").map((p) => parseFloat(p.trim()));
+  return [parts[0] ?? 0, parts[1] ?? 0, parts[2] ?? 0, parts[3] ?? 1];
+}
+
+function parseHex(hex: string): [number, number, number] {
+  const h = hex.replace("#", "");
+  return [
+    parseInt(h.slice(0, 2), 16),
+    parseInt(h.slice(2, 4), 16),
+    parseInt(h.slice(4, 6), 16),
+  ];
+}
+
+/**
+ * Lerp an rgba string toward a hex by `t` (0..1) without changing
+ * its alpha. Used to tint the bell mid-gradient toward the dominant
+ * captured type's color.
+ */
+function blendRgbaTowardHex(base: string, hex: string, t: number): string {
+  const a = parseRgba(base);
+  if (!a) return base;
+  const [hr, hg, hb] = parseHex(hex);
+  const r = Math.round(a[0] + (hr - a[0]) * t);
+  const g = Math.round(a[1] + (hg - a[1]) * t);
+  const b = Math.round(a[2] + (hb - a[2]) * t);
+  return `rgba(${r}, ${g}, ${b}, ${a[3]})`;
+}
+
 /** Shortest angular distance between two angles (radians). */
 function angDist(a: number, b: number): number {
   let d = Math.abs(a - b);
@@ -568,6 +609,11 @@ function drawCore(ctx: CanvasRenderingContext2D, world: World, core: Body): void
   ctx.fill();
 
   // Tentacles — count grows with propulsion. Centered around 0.
+  // Wave amplitude scales with core speed: stationary = gentle ripple,
+  // top speed = whipping motion. (sp from the bell-rotation block above
+  // would do, but we recompute as `coreSpeed` to keep the intent local.)
+  const coreSpeed = Math.hypot(core.vx ?? 0, core.vy ?? 0);
+  const speedFactor = 0.5 + Math.min(coreSpeed / 6, 1.2);
   ctx.lineCap = "round";
   const halfTent = (tentacleCount - 1) / 2;
   for (let i = 0; i < tentacleCount; i++) {
@@ -581,7 +627,7 @@ function drawCore(ctx: CanvasRenderingContext2D, world: World, core: Body): void
     for (let s = 1; s <= segments; s++) {
       const f = s / segments;
       const phase = t * 0.045 + strand * 0.55 + f * 5;
-      const wave = Math.sin(phase) * 7 * f;
+      const wave = Math.sin(phase) * 7 * f * speedFactor;
       ctx.lineTo(startX + wave, startY + length * f);
     }
     const grad = ctx.createLinearGradient(startX, startY, startX, startY + length);
@@ -592,10 +638,32 @@ function drawCore(ctx: CanvasRenderingContext2D, world: World, core: Body): void
     ctx.stroke();
   }
 
-  // Bell — morphed perimeter, gradient fill
+  // Bell mid-stop tints toward the dominant captured type so the
+  // creature literally takes on the color of what it eats. Cap at
+  // 50% blend so the bell doesn't lose its base identity.
+  const totalCaptured = world.entityBodies.length - 1;
+  let bellMidColor = T.bell.bellMid;
+  if (totalCaptured > 0) {
+    let dominantType = "";
+    let dominantCount = 0;
+    for (const [k, v] of Object.entries(comp)) {
+      if (v > dominantCount) {
+        dominantCount = v;
+        dominantType = k;
+      }
+    }
+    if (dominantType && dominantCount > 0) {
+      const share = dominantCount / totalCaptured;
+      const blendT = Math.min(0.5, share);
+      const dominantHex = currentTheme().nodeColors[dominantType as NodeTypeId];
+      if (dominantHex) {
+        bellMidColor = blendRgbaTowardHex(T.bell.bellMid, dominantHex, blendT);
+      }
+    }
+  }
   const bell = ctx.createRadialGradient(0, -rr * 0.35, rr * 0.1, 0, 0, rr);
   bell.addColorStop(0, T.bell.bellInner);
-  bell.addColorStop(0.55, T.bell.bellMid);
+  bell.addColorStop(0.55, bellMidColor);
   bell.addColorStop(1, T.bell.bellOuter);
   ctx.fillStyle = bell;
   tracePerimeter(ctx, perimeter);

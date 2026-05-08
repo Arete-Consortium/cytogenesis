@@ -125,6 +125,8 @@ export class World {
   wallMs: number;
   /** Player-toggled pause. tick early-returns when true. */
   paused: boolean;
+  /** 0 (surface) → 3 (depth 60). Darkens the bg gradient as you descend. */
+  biomeStage: number;
   /** Viewport in CSS pixels. Camera follow keeps the core at viewport center. */
   viewportWidth: number;
   viewportHeight: number;
@@ -146,7 +148,7 @@ export class World {
   /** Wallclock until which the capture-combo buff is active. */
   comboActiveUntilMs: number;
   /** Recent capture timestamps (wallMs) — sliding window for combo detection. */
-  private recentCaptures: number[];
+  recentCaptures: number[];
   /** Trait IDs that were active on the previous capture, for first-acquisition toasts. */
   private prevTraitSet: Set<string>;
   /** Accumulator for sub-frame d3 sim ticks during slow-mo. */
@@ -181,6 +183,7 @@ export class World {
     this.peakCaptured = 1;
     this.wallMs = 0;
     this.paused = false;
+    this.biomeStage = 0;
     this.viewportWidth = 0;
     this.viewportHeight = 0;
     this.coreTrail = [];
@@ -853,10 +856,12 @@ export class World {
     }
     // Biome milestones — emit on first crossing of each threshold so the
     // run has visible shape between start and transcend.
-    for (const m of BIOME_MILESTONES) {
+    for (let i = 0; i < BIOME_MILESTONES.length; i++) {
+      const m = BIOME_MILESTONES[i];
       if (this.entityBodies.length === m) {
         this.events.push(`biome:${m}` as WorldEvent);
         this.addShake(8);
+        this.biomeStage = i + 1;
       }
     }
     if (this.entityBodies.length >= TRANSCEND_AT && this.runStatus === "running") {
@@ -969,6 +974,15 @@ export class World {
 
   countByKind(): { captured: number; free: number } {
     return { captured: this.entityBodies.length, free: this.freeBodies.length };
+  }
+
+  /** Current combo chain length (entries within the sliding window). */
+  comboChain(): number {
+    let n = 0;
+    for (const t of this.recentCaptures) {
+      if (this.wallMs - t <= COMBO_WINDOW_MS) n++;
+    }
+    return n;
   }
 
   dispose(): void {
