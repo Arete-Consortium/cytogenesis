@@ -33,8 +33,10 @@ const CAPTURE_PAD = 2;
 const MAX_FREE_SPEED = 1.1;
 /** Per-tick random jitter applied to velocity (Brownian-flavored drift). */
 const JITTER = 0.05;
-/** Total absorbed count that ends the run as a transcend (win). */
+/** Total absorbed at which the first 'transcend' event fires (badge milestone). */
 const TRANSCEND_AT = 80;
+/** Difficulty cycle length — every CYCLE_LEN absorbed bumps challenge. */
+const CYCLE_LEN = 80;
 /** Evolution-stage thresholds — index = stage, value = totalAbsorbed required. */
 export const STAGE_THRESHOLDS = [0, 6, 16, 32, 56, 80];
 export const MAX_STAGE = STAGE_THRESHOLDS.length - 1;
@@ -129,14 +131,26 @@ const COMBO_DURATION_MS = 3000;
 const COMBO_ACCEL_MUL = 1.4;
 const COMBO_RADIUS_BONUS = 8;
 
-/** Captured-count milestones that trigger a biome flourish. */
-const BIOME_MILESTONES = [20, 40, 60];
+/**
+ * Captured-count milestones. First three drive the original biome
+ * progression (depth 20/40/60); subsequent ones are endless-mode
+ * boss spawns that keep the run escalating after transcend.
+ */
+const BIOME_MILESTONES = [20, 40, 60, 90, 130, 180, 240, 310, 400, 500, 620];
 
-/** Boss tuning per biome (one per milestone). */
+/** Boss kind per milestone — three bosses cycle through endlessly. */
 const BOSS_KIND_BY_BIOME: Record<number, BossKind> = {
   20: "swarmLord",
   40: "tideMaw",
   60: "abyssEye",
+  90: "swarmLord",
+  130: "tideMaw",
+  180: "abyssEye",
+  240: "swarmLord",
+  310: "tideMaw",
+  400: "abyssEye",
+  500: "swarmLord",
+  620: "tideMaw",
 };
 const BOSS_HEALTH: Record<BossKind, number> = {
   swarmLord: 20,
@@ -583,19 +597,26 @@ export class World {
     this.sparkles.push({ x, y, age: 0, max: 22, hue });
   }
 
+  /** Endless-mode cycle counter — every CYCLE_LEN absorbed = +1 cycle. */
+  private cycleRound(): number {
+    return Math.floor(this.totalAbsorbed / CYCLE_LEN);
+  }
+
   /**
-   * Difficulty curve: as the entity grows, predators spawn faster and
-   * the cap rises. Both saturate around captured=30 so a transcend run
-   * doesn't get unwinnable.
+   * Difficulty curve: in cycle 0 (pre-transcend) ramps with absorbed
+   * count; each cycle past the first squeezes spawn interval further
+   * and raises the predator cap. Floor at 800ms so it's still
+   * survivable.
    */
   private currentSpawnIntervalMs(): number {
-    const captured = this.entityBodies.length;
-    const factor = Math.min(1, captured / 30);
-    return Math.round(PREDATOR_SPAWN_INTERVAL_MS - factor * 3500);
+    const factor = Math.min(1, this.totalAbsorbed / 30);
+    const base = Math.round(PREDATOR_SPAWN_INTERVAL_MS - factor * 3500);
+    const cycle = this.cycleRound();
+    return Math.max(800, base - cycle * 500);
   }
   private currentMaxPredators(): number {
-    const captured = this.entityBodies.length;
-    return Math.min(8, 2 + Math.floor(captured / 8));
+    const baseCap = Math.min(8, 2 + Math.floor(this.totalAbsorbed / 8));
+    return Math.min(12, baseCap + this.cycleRound());
   }
 
   /** Time-gated periodic predator spawn, capped by current difficulty. */
@@ -678,12 +699,14 @@ export class World {
     if (idx >= 0) this.predators.splice(idx, 1);
     this.emitSparkle(p.x ?? 0, p.y ?? 0, "rgba(248, 113, 113,");
     if (p.bossKind) {
-      // Boss death — bigger shake + reward + special event.
+      // Boss death — bigger shake + scaling reward + special event.
       this.addShake(20);
       this.events.push("killBoss");
       this.bossesDefeated += 1;
       const reward = BOSS_REWARD_TYPE[p.bossKind];
-      for (let i = 0; i < BOSS_REWARD_AMOUNT; i++) {
+      const cycleMul = Math.pow(1.5, this.cycleRound());
+      const rewardAmount = Math.round(BOSS_REWARD_AMOUNT * cycleMul);
+      for (let i = 0; i < rewardAmount; i++) {
         this.absorbed[reward] += 1;
         this.totalAbsorbed += 1;
       }
@@ -698,13 +721,14 @@ export class World {
   /**
    * Spawn a boss for the given biome. Bosses go into this.predators
    * (reusing AI + collision pipeline) but are tagged via bossKind so
-   * the render + death paths special-case them.
+   * the render + death paths special-case them. HP scales 1.5× per
+   * cycle past the first encounter so endless-mode rematches are
+   * meaningfully harder.
    */
   private spawnBoss(kind: BossKind): void {
     const core = this.entityBodies[0];
     const cx = core?.x ?? 0;
     const cy = core?.y ?? 0;
-    // Pick a spawn point at safe distance on the arena edge.
     const angle = this.rng.next() * Math.PI * 2;
     const spawnDist = 600;
     let bx = cx + Math.cos(angle) * spawnDist;
@@ -712,8 +736,10 @@ export class World {
     const a = this.arenaHalf;
     bx = Math.max(-a, Math.min(a, bx));
     by = Math.max(-a, Math.min(a, by));
-    const radius = BOSS_RADIUS[kind];
-    const health = BOSS_HEALTH[kind];
+    const cycle = this.cycleRound();
+    const cycleMul = Math.pow(1.5, cycle);
+    const radius = BOSS_RADIUS[kind] * (1 + cycle * 0.08);
+    const health = Math.round(BOSS_HEALTH[kind] * cycleMul);
     this.predators.push({
       id: newId(`boss-${kind}`),
       type: "spore",
@@ -723,7 +749,7 @@ export class World {
       y: by,
       vx: 0,
       vy: 0,
-      variant: "brute", // reuse brute AI: slow + heavy hit
+      variant: "brute",
       health,
       bossKind: kind,
     });
@@ -1246,10 +1272,11 @@ export class World {
       }
     }
 
-    if (this.totalAbsorbed >= TRANSCEND_AT && this.runStatus === "running") {
-      this.runStatus = "transcended";
-      this.runEndedAtMs = this.wallMs;
-      this.addShake(15);
+    // Transcend is now a *milestone*, not a run-end. Run continues
+    // endlessly until death; difficulty scales per cycle (see
+    // cycleRound / difficulty getters below).
+    if (this.totalAbsorbed === TRANSCEND_AT) {
+      this.addShake(18);
       this.events.push("transcend");
     }
 

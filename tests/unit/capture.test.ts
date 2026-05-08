@@ -59,16 +59,15 @@ describe("World.capture (absorb-counter model)", () => {
     expect(w.evolutionStage).toBe(1);
   });
 
-  it("transcend triggers at TRANSCEND_AT (80) absorbed", () => {
+  it("transcend event fires at 80 absorbed (run continues — endless mode)", () => {
     const w = new World({ freeCount: 1, seed: "transcend" });
     place(w.entityBodies[0], 0, 0);
-    // Synthesize 80 free bodies and capture them.
     for (let i = 0; i < 80; i++) {
       const f: Body = {
         id: `synth-${i}`,
-        type: "membrane",
+        type: "propulsion",
         kind: "free",
-        radius: 10,
+        radius: 7,
         x: 0,
         y: 0,
         vx: 0,
@@ -78,6 +77,7 @@ describe("World.capture (absorb-counter model)", () => {
       w.capture(f);
     }
     expect(w.totalAbsorbed).toBeGreaterThanOrEqual(80);
-    expect(w.runStatus).toBe("transcended");
+    expect(w.runStatus).toBe("running"); // endless mode — transcend is a milestone, not run-end
+    expect(w.events).toContain("transcend");
   });
 });
