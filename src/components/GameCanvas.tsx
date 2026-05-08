@@ -392,6 +392,18 @@ export default function GameCanvas() {
       fpsAccum += 1;
       tick += 1;
 
+      // Self-heal viewport: iOS Safari changes clientHeight when the
+      // address bar collapses without always firing resize. If our
+      // cached dims drift, bg fill only covers the stale region and
+      // the rest of the canvas accumulates motion-trail garbage from
+      // free cells. Re-resize when we detect drift.
+      if (
+        canvas.clientWidth !== width ||
+        canvas.clientHeight !== height
+      ) {
+        resize();
+      }
+
       world.tick(dt);
       world.captureNearby();
 
