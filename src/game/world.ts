@@ -53,7 +53,6 @@ const PREDATOR_BRUTE_PROB = 0.3;
 const PREDATOR_FIRST_SPAWN_MS = 8000;
 const PREDATOR_SPAWN_INTERVAL_MS = 5000;
 const PREDATOR_MIN_SPAWN_DISTANCE = 400;
-const MAX_PREDATORS = 5;
 /** Warning window between telegraph appearance and predator materializing. */
 const PREDATOR_TELEGRAPH_MS = 1500;
 /** Free-cell types to sample from when scattering / respawning. */
@@ -170,26 +169,6 @@ const COMBO_RADIUS_BONUS = 8;
  */
 const BIOME_MILESTONES = [20, 40, 60, 90, 130, 180, 240, 310, 400, 500, 620];
 
-/**
- * Each biome milestone spawns a centipede. Per-milestone "level"
- * (1/2/3, repeating) drives reward type + stat scaling on top of
- * cycleRound. The centipede is the single boss creature now —
- * skirmisher / brute / swarm-lord / tide-maw / abyss-eye are all
- * gone.
- */
-const BOSS_KIND_BY_BIOME: Record<number, BossKind> = {
-  20: "centipede",  // first encounter — the lunge fight
-  40: "swarmLord",  // hive queen — orbiting drones
-  60: "tideMaw",    // mirror — copies your bell
-  90: "centipede",
-  130: "swarmLord",
-  180: "tideMaw",
-  240: "centipede",
-  310: "swarmLord",
-  400: "tideMaw",
-  500: "centipede",
-  620: "swarmLord",
-};
 /** Level (1/2/3) per milestone — drives reward type + difficulty. */
 const CENTIPEDE_LEVEL_BY_BIOME: Record<number, number> = {
   20: 1,

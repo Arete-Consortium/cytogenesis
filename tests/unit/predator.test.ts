@@ -2,11 +2,6 @@ import { describe, expect, it } from "vitest";
 import { World } from "@/game/world";
 import type { Body } from "@/game/types";
 
-const place = (b: Body, x: number, y: number) => {
-  b.x = x;
-  b.y = y;
-};
-
 // Use propulsion so absorbed.membrane stays 0 — membrane armor would
 // otherwise reduce the damage the tests are measuring.
 const synth = (i: number): Body => ({
