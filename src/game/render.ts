@@ -705,6 +705,35 @@ function drawCore(ctx: CanvasRenderingContext2D, world: World, core: Body): void
   ctx.fill();
 
   ctx.restore();
+
+  // Spore swarmlings — small dots orbiting the bell at radius rr*1.55,
+  // count = absorbed spores. Drawn outside the rotation transform so
+  // they orbit in world space, not bell-local.
+  const spores = comp.spore ?? 0;
+  if (spores > 0) {
+    const sporeColor = currentTheme().nodeColors.spore;
+    const orbitR = rr * 1.55;
+    for (let i = 0; i < spores; i++) {
+      const a = (i / spores) * Math.PI * 2 + t * 0.012;
+      const sx = x + Math.cos(a) * orbitR;
+      const sy = y + Math.sin(a) * orbitR;
+      // Tiny halo
+      const halo = ctx.createRadialGradient(sx, sy, 0, sx, sy, 7);
+      halo.addColorStop(0, sporeColor);
+      halo.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.globalAlpha = 0.5;
+      ctx.fillStyle = halo;
+      ctx.beginPath();
+      ctx.arc(sx, sy, 7, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      // Body
+      ctx.fillStyle = sporeColor;
+      ctx.beginPath();
+      ctx.arc(sx, sy, 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
 }
 
 /**

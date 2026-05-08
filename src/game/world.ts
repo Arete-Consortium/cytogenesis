@@ -91,6 +91,17 @@ const COMBO_RADIUS_BONUS = 8;
 /** Captured-count milestones that trigger a biome flourish. */
 const BIOME_MILESTONES = [20, 40, 60];
 
+/** Free-cell ecology tuning. */
+const ECOLOGY_INTERVAL_MS = 4000;
+const ECOLOGY_NEIGHBOR_RANGE = 250;
+const ECOLOGY_REPRODUCE_MIN = 2;
+const ECOLOGY_REPRODUCE_MAX = 5;
+const ECOLOGY_DECAY_PROB = 0.05;
+const ECOLOGY_REPRO_CAP_PER_TICK = 8;
+const ECOLOGY_DECAY_CAP_PER_TICK = 6;
+const FREE_POP_MIN = 50;
+const FREE_POP_MAX = 400;
+
 /** Stage at which the given totalAbsorbed currently sits. */
 export function computeStage(totalAbsorbed: number): number {
   let stage = 0;
@@ -159,6 +170,10 @@ export class World {
   paused: boolean;
   /** 0 (surface) → 3 (depth 60). Darkens the bg gradient as you descend. */
   biomeStage: number;
+  /** Wallclock at which the next chloroplast regen will fire. */
+  private nextRegenAtMs: number;
+  /** Wallclock at which the next ecology pass will fire. */
+  private nextEcologyAtMs: number;
   /** Viewport in CSS pixels. Camera follow keeps the core at viewport center. */
   viewportWidth: number;
   viewportHeight: number;
@@ -231,6 +246,8 @@ export class World {
     this.wallMs = 0;
     this.paused = false;
     this.biomeStage = 0;
+    this.nextRegenAtMs = 0;
+    this.nextEcologyAtMs = 4000;
     this.viewportWidth = 0;
     this.viewportHeight = 0;
     this.coreTrail = [];
@@ -361,6 +378,8 @@ export class World {
       this.resolveTelegraphs();
       this.applySteerForce();
       this.applyAutonomousSwim();
+      this.maybeRegen();
+      this.maybeRunEcology();
     }
     this.integrateFree(scale);
     this.integratePredators(scale);
@@ -678,7 +697,10 @@ export class World {
    * Replaces the legacy pruneFromGraph in the absorb-counter model.
    */
   damageAbsorbed(amount: number): void {
-    let remaining = amount;
+    // Membrane armor: each absorbed membrane reduces incoming damage
+    // by 1, with a floor of 1 so you always feel the hit.
+    const armor = this.absorbed.membrane ?? 0;
+    let remaining = Math.max(1, amount - armor);
     while (remaining > 0 && this.totalAbsorbed > 0) {
       // Pick a random non-zero absorbed type to drain.
       const candidates: NodeTypeId[] = [];
@@ -890,6 +912,87 @@ export class World {
     return true;
   }
 
+  /**
+   * Chloroplast regen — every (8000 / chloroplastCount) ms, restore 1
+   * to the lowest-count non-core absorbed type. No-op without
+   * chloroplasts. Skips if entity is already at peak (transcend).
+   */
+  private maybeRegen(): void {
+    const chloros = this.absorbed.chloroplast ?? 0;
+    if (chloros <= 0) return;
+    if (this.wallMs < this.nextRegenAtMs) return;
+    if (this.totalAbsorbed >= TRANSCEND_AT) return;
+    this.nextRegenAtMs = this.wallMs + Math.max(800, 8000 / chloros);
+    // Find the type with lowest non-zero count to top up. Falls back
+    // to membrane (the structural baseline) if everything is at 0.
+    let lowestType: NodeTypeId = "membrane";
+    let lowestN = Infinity;
+    for (const k of Object.keys(this.absorbed) as NodeTypeId[]) {
+      if (k === "core") continue;
+      const n = this.absorbed[k] ?? 0;
+      if (n > 0 && n < lowestN) {
+        lowestN = n;
+        lowestType = k;
+      }
+    }
+    this.absorbed[lowestType] = (this.absorbed[lowestType] ?? 0) + 1;
+    this.totalAbsorbed += 1;
+    this.peakCaptured = Math.max(this.peakCaptured, this.totalAbsorbed);
+    this.traits = recomputeTraits(this.absorbed);
+  }
+
+  /**
+   * Free-cell ecology tick. Cells reproduce in moderate-density
+   * neighborhoods (2–5 neighbors within ECOLOGY_NEIGHBOR_RANGE);
+   * isolated cells (0 neighbors) decay with low probability. Bounded
+   * by FREE_POP_MIN/MAX so the ecosystem stays playable.
+   */
+  private maybeRunEcology(): void {
+    if (this.wallMs < this.nextEcologyAtMs) return;
+    this.nextEcologyAtMs = this.wallMs + ECOLOGY_INTERVAL_MS;
+
+    const qt = buildQuadtree(this.freeBodies);
+    const reproduce: Body[] = [];
+    const decay: Body[] = [];
+    for (const b of this.freeBodies) {
+      let n = 0;
+      rangeQuery(qt, b.x ?? 0, b.y ?? 0, ECOLOGY_NEIGHBOR_RANGE, (other) => {
+        if (other !== b) n++;
+      });
+      if (
+        n >= ECOLOGY_REPRODUCE_MIN &&
+        n <= ECOLOGY_REPRODUCE_MAX &&
+        this.freeBodies.length + reproduce.length < FREE_POP_MAX
+      ) {
+        reproduce.push(b);
+      } else if (n === 0 && this.rng.next() < ECOLOGY_DECAY_PROB) {
+        decay.push(b);
+      }
+    }
+
+    // Cap mutations per tick so populations move smoothly.
+    for (const parent of reproduce.slice(0, ECOLOGY_REPRO_CAP_PER_TICK)) {
+      const child = makeBody(
+        parent.type,
+        "free",
+        (parent.x ?? 0) + this.rng.range(-30, 30),
+        (parent.y ?? 0) + this.rng.range(-30, 30),
+        this.rng.range(-MAX_FREE_SPEED, MAX_FREE_SPEED),
+        this.rng.range(-MAX_FREE_SPEED, MAX_FREE_SPEED),
+      );
+      this.freeBodies.push(child);
+    }
+    for (const dead of decay.slice(0, ECOLOGY_DECAY_CAP_PER_TICK)) {
+      const i = this.freeBodies.indexOf(dead);
+      if (i >= 0) this.freeBodies.splice(i, 1);
+    }
+
+    // Population-floor safeguard so the arena never goes barren.
+    while (this.freeBodies.length < FREE_POP_MIN) {
+      this.freeBodies.push(this.spawnFree({ onEdge: true }));
+    }
+  }
+
   /** Reheat the sim so a drag has springy follow-through. */
   reheat(target = 0.3): void {
     this.sim.alpha(Math.max(this.sim.alpha(), target));
@@ -999,37 +1102,30 @@ export class World {
     const maxFreeR = Math.max(...this.freeBodies.map((b) => b.radius));
     const qt: BodyQuadtree = buildQuadtree(this.freeBodies);
     const formed: Bond[] = [];
-    const toSpawn: Body[] = [];
+    // Spore aura — every absorbed spore extends the capture surface.
+    const spores = this.absorbed.spore ?? 0;
+    const sporeBonus = spores * 6;
 
     for (const c of this.entityBodies) {
-      // Only the bell + mouth organelles eat. Other captured cells are
-      // ride-along — the player has to actually steer prey into the
-      // capture surface, which makes mouths tactically meaningful.
       if (c.type !== "core" && c.type !== "mouth") continue;
       const cx = c.x ?? 0;
       const cy = c.y ?? 0;
       const comboBonus = this.wallMs < this.comboActiveUntilMs ? COMBO_RADIUS_BONUS : 0;
-      const bonus = this.traits.captureRadiusBonus + comboBonus;
+      const bonus = this.traits.captureRadiusBonus + comboBonus + sporeBonus;
       const searchR = c.radius + maxFreeR + CAPTURE_PAD + bonus;
       rangeQuery(qt, cx, cy, searchR, (free) => {
-        // The body might have been captured this same sweep; skip.
         if (free.kind !== "free") return;
         const dx = (free.x ?? 0) - cx;
         const dy = (free.y ?? 0) - cy;
         const r = c.radius + free.radius + CAPTURE_PAD + bonus;
         if (dx * dx + dy * dy <= r * r) {
           const bond = this.capture(free);
-          if (bond) {
-            formed.push(bond);
-            // Bias respawns toward CA live zones — that's where the
-            // "prey grows" — falling back to edge if grid is dead.
-            toSpawn.push(this.spawnFree({ biasToAlive: true }));
-          }
+          if (bond) formed.push(bond);
         }
       });
     }
 
-    if (toSpawn.length) this.freeBodies.push(...toSpawn);
+    // No auto-respawn here — free-cell ecology handles replenishment.
     return formed;
   }
 

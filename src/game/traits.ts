@@ -47,5 +47,9 @@ export function recomputeTraits(absorbed: Record<NodeTypeId, number>): TraitStat
   state.speedMul = Math.min(1.2, state.levels.propulsion * 0.45);
   state.captureRadiusBonus = Math.min(15, state.levels.wide_capture * 5);
   state.lockOnRange = state.levels.lock_on > 0 ? 250 + state.levels.lock_on * 80 : 0;
+  // Mitochondrion absorbs reduce lock-on cooldown — base 1500ms, -100ms
+  // per mito, floor 500ms (10 mitos = max recharge speed).
+  const mito = absorbed.mitochondrion ?? 0;
+  state.lockOnCooldownMs = Math.max(500, 1500 - mito * 100);
   return state;
 }

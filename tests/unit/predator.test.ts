@@ -7,11 +7,13 @@ const place = (b: Body, x: number, y: number) => {
   b.y = y;
 };
 
+// Use propulsion so absorbed.membrane stays 0 — membrane armor would
+// otherwise reduce the damage the tests are measuring.
 const synth = (i: number): Body => ({
   id: `synth-${i}`,
-  type: "membrane",
+  type: "propulsion",
   kind: "free",
-  radius: 10,
+  radius: 7,
   x: 0,
   y: 0,
   vx: 0,
