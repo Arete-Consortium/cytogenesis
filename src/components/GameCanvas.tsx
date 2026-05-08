@@ -120,12 +120,14 @@ export default function GameCanvas() {
   }, []);
 
   const selectEditorKind = (kind: string) => {
+    audio.init();
     const w = worldRef.current;
     if (!w) return;
     w.selectEditorPart(kind as Parameters<typeof w.selectEditorPart>[0]);
-    setEditorState((s) => ({ ...s, selectedKind: kind }));
+    setEditorState({ open: false, selectedKind: null, offerings: [] });
   };
   const skipEditor = () => {
+    audio.init();
     const w = worldRef.current;
     if (!w) return;
     w.closeEditor();
@@ -380,14 +382,7 @@ export default function GameCanvas() {
       clearStickInput();
       if (wasStick) return; // stick gestures don't fire taps
       if (moved > TAP_THRESHOLD) return;
-      // Body-editor placement mode — tap converts to angle, place part.
-      if (world.editor.open && world.editor.selectedKind != null) {
-        const w = world.screenToWorld(sx, sy);
-        world.placeSelectedPart(w.x, w.y);
-        return;
-      }
-      // Editor open but no kind picked yet — taps on the canvas do
-      // nothing; the part-pick UI handles input.
+      // Editor open — canvas taps are inert; the part-pick UI auto-places.
       if (world.editor.open) return;
       if (world.traits.lockOnRange <= 0) return;
       const w = world.screenToWorld(sx, sy);
@@ -784,49 +779,40 @@ export default function GameCanvas() {
         </button>
       )}
 
-      {/* Body editor — Spore-style. Three offerings while picking,
-          then placement prompt while attaching. */}
+      {/* Body editor — Spore-style. One-tap pick auto-places at next
+          slot around the bell. Backdrop dim makes the choice feel
+          modal and prevents stray taps from reaching the thumbstick. */}
       {editorState.open && (
-        <div className="pointer-events-none absolute inset-0 z-40 flex flex-col items-center justify-end pb-20">
-          {editorState.selectedKind == null ? (
-            <div className="pointer-events-auto flex flex-col items-center gap-3 px-4">
-              <div className="font-mono text-[10px] uppercase tracking-[0.35em] text-cyan-200/80">
-                evolution · choose an organelle
-              </div>
-              <div className="flex flex-wrap items-stretch justify-center gap-3">
-                {editorState.offerings.map((kind) => (
-                  <button
-                    key={kind}
-                    onClick={() => selectEditorKind(kind)}
-                    className="flex min-w-[112px] flex-col items-center gap-1 rounded-2xl border border-cyan-300/30 bg-black/55 px-4 py-3 text-zinc-100 backdrop-blur transition-colors hover:bg-cyan-300/10 active:bg-cyan-300/20"
-                  >
-                    <span className="text-2xl leading-none">{PART_GLYPH[kind] ?? "⬡"}</span>
-                    <span className="font-mono text-xs uppercase tracking-[0.18em] text-cyan-200">
-                      {kind}
-                    </span>
-                    <span className="max-w-[120px] text-center font-mono text-[10px] leading-tight text-zinc-400">
-                      {PART_BLURB[kind] ?? ""}
-                    </span>
-                  </button>
-                ))}
-              </div>
+        <div className="absolute inset-0 z-40 flex flex-col items-center justify-center bg-black/55 px-4 backdrop-blur-sm">
+          <div className="mb-2 font-mono text-[11px] uppercase tracking-[0.35em] text-cyan-200/80">
+            evolution
+          </div>
+          <div className="mb-5 font-mono text-base uppercase tracking-[0.2em] text-zinc-100">
+            choose an organelle
+          </div>
+          <div className="flex flex-wrap items-stretch justify-center gap-3">
+            {editorState.offerings.map((kind) => (
               <button
-                onClick={skipEditor}
-                className="pointer-events-auto mt-1 font-mono text-[11px] uppercase tracking-[0.25em] text-zinc-500 underline-offset-4 hover:text-zinc-300 hover:underline"
+                key={kind}
+                onClick={() => selectEditorKind(kind)}
+                className="flex min-w-[120px] flex-col items-center gap-1 rounded-2xl border border-cyan-300/30 bg-zinc-950/80 px-4 py-4 text-zinc-100 transition-colors hover:bg-cyan-300/10 active:bg-cyan-300/25"
               >
-                skip
+                <span className="text-3xl leading-none">{PART_GLYPH[kind] ?? "⬡"}</span>
+                <span className="font-mono text-xs uppercase tracking-[0.18em] text-cyan-200">
+                  {kind}
+                </span>
+                <span className="max-w-[130px] text-center font-mono text-[10px] leading-tight text-zinc-400">
+                  {PART_BLURB[kind] ?? ""}
+                </span>
               </button>
-            </div>
-          ) : (
-            <div className="pointer-events-none flex flex-col items-center gap-1">
-              <div className="font-mono text-[10px] uppercase tracking-[0.35em] text-cyan-200/80">
-                tap your bell to attach
-              </div>
-              <div className="font-mono text-xs uppercase tracking-[0.18em] text-zinc-300">
-                {editorState.selectedKind}
-              </div>
-            </div>
-          )}
+            ))}
+          </div>
+          <button
+            onClick={skipEditor}
+            className="mt-5 font-mono text-[11px] uppercase tracking-[0.25em] text-zinc-500 underline-offset-4 hover:text-zinc-300 hover:underline"
+          >
+            skip
+          </button>
         </div>
       )}
 

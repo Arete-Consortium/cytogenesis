@@ -1872,17 +1872,35 @@ export class World {
     this.events.push("editorOpen");
   }
 
-  /** Player picked one of the 3 offerings. Next canvas tap places it. */
+  /**
+   * Player picked an offering. Auto-place at the next free slot around
+   * the bell — Spore-style one-tap placement. Slots cycle around 8
+   * cardinal directions starting from the front (0 rad) and stepping
+   * by π/4. This keeps the placement flow to a single tap and removes
+   * the failure modes of a separate canvas-tap placement step.
+   */
   selectEditorPart(kind: NodeTypeId): void {
     if (!this.editor.open) return;
     if (!this.editor.offerings.includes(kind)) return;
-    this.editor.selectedKind = kind;
+    const slotIndex = this.placedParts.length % 8;
+    // Slot 0 is the front, then alternate front-right, front-left, etc.
+    // so early parts spread evenly instead of bunching.
+    const slotOrder = [0, 4, 2, 6, 1, 5, 3, 7];
+    const ord = slotOrder[slotIndex] ?? slotIndex;
+    const angle = (ord / 8) * Math.PI * 2 - Math.PI;
+    this.placedParts.push({
+      id: newId("part"),
+      kind,
+      angle,
+      placedAtTickN: this.tickN,
+    });
+    this.events.push("partPlaced");
+    this.closeEditor();
   }
 
   /**
-   * Player tapped the canvas while a part was selected. Convert tap →
-   * angle around the bell (using world coords), commit the part, and
-   * close the editor.
+   * Legacy explicit-position placement — kept for tests / future drag
+   * UI. Not wired to the canvas-tap flow anymore.
    */
   placeSelectedPart(worldX: number, worldY: number): void {
     if (!this.editor.open) return;
@@ -1911,6 +1929,9 @@ export class World {
       triggeredStage: -1,
     };
     this.paused = false;
+    // Clear any latched thumbstick input so the bell doesn't snap
+    // sideways the moment the world resumes.
+    this.stickInput = null;
   }
 
   /**
@@ -1923,6 +1944,7 @@ export class World {
    * so the swarm density stays steady.
    */
   captureNearby(): Bond[] {
+    if (this.paused) return [];
     if (this.entityBodies.length === 0 || this.freeBodies.length === 0) return [];
     // Worst-case capture radius accounts for the largest free-cell type.
     const maxFreeR = Math.max(...this.freeBodies.map((b) => b.radius));

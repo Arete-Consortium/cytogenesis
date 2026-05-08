@@ -1090,41 +1090,17 @@ function drawEditorOverlay(ctx: CanvasRenderingContext2D, world: World): void {
   const cy = core.y ?? 0;
   const cr = core.radius;
   const t = world.tickN;
-  // While picking — soft cyan glow ring tells player the world is
-  // paused for choice. After picking, the ring goes pulsing white +
-  // shows a tap prompt arc.
-  if (world.editor.selectedKind == null) {
-    const pulse = 0.5 + 0.3 * Math.sin(t * 0.12);
-    ctx.strokeStyle = `rgba(120, 220, 255, ${pulse.toFixed(3)})`;
-    ctx.lineWidth = 2;
-    ctx.setLineDash([6, 6]);
-    ctx.lineDashOffset = -t * 0.5;
-    ctx.beginPath();
-    ctx.arc(cx, cy, cr * 1.55, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.setLineDash([]);
-  } else {
-    // Active placement — bright pulsing ring + "tap to place" arc.
-    const pulse = 0.6 + 0.4 * Math.sin(t * 0.22);
-    ctx.strokeStyle = `rgba(255, 240, 200, ${pulse.toFixed(3)})`;
-    ctx.lineWidth = 2.4;
-    ctx.setLineDash([10, 6]);
-    ctx.lineDashOffset = -t * 1.2;
-    ctx.beginPath();
-    ctx.arc(cx, cy, cr * 1.4, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.setLineDash([]);
-    // Faint glyph at 8 cardinal directions hinting placement freedom.
-    ctx.fillStyle = `rgba(255, 240, 200, ${(pulse * 0.55).toFixed(3)})`;
-    for (let i = 0; i < 8; i++) {
-      const a = (i / 8) * Math.PI * 2;
-      const gx = cx + Math.cos(a) * cr * 1.4;
-      const gy = cy + Math.sin(a) * cr * 1.4;
-      ctx.beginPath();
-      ctx.arc(gx, gy, 3.5, 0, Math.PI * 2);
-      ctx.fill();
-    }
-  }
+  // Soft cyan dashed ring around the bell — tells the player the
+  // editor is open and points at where their part will attach.
+  const pulse = 0.5 + 0.3 * Math.sin(t * 0.12);
+  ctx.strokeStyle = `rgba(120, 220, 255, ${pulse.toFixed(3)})`;
+  ctx.lineWidth = 2;
+  ctx.setLineDash([6, 6]);
+  ctx.lineDashOffset = -t * 0.5;
+  ctx.beginPath();
+  ctx.arc(cx, cy, cr * 1.55, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.setLineDash([]);
 }
 
 /* ─── Predator (anglerfish) ──────────────────────────────────────── */
