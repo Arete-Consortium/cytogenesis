@@ -67,9 +67,11 @@ let nextToastId = 1;
 
 export default function GameCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const worldRef = useRef<World | null>(null);
   const [runId, setRunId] = useState(0);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [muted, setMuted] = useState(false);
+  const [paused, setPaused] = useState(false);
   const [showTutorial, setShowTutorial] = useState(true);
   const [bestResult, setBestResult] = useState<{ best: BestRun | null; isNewBest: boolean }>(
     { best: null, isNewBest: false },
@@ -96,6 +98,14 @@ export default function GameCanvas() {
       } catch {
         /* private mode */
       }
+      return next;
+    });
+  };
+
+  const togglePause = () => {
+    setPaused((p) => {
+      const next = !p;
+      if (worldRef.current) worldRef.current.paused = next;
       return next;
     });
   };
@@ -146,6 +156,8 @@ export default function GameCanvas() {
     if (!ctx) return;
 
     const world = new World();
+    worldRef.current = world;
+    setPaused(false);
     let hoveredId: string | null = null;
     let draggingId: string | null = null;
 
@@ -574,14 +586,44 @@ export default function GameCanvas() {
         </div>
       )}
 
-      {/* Mute toggle — small icon button next to back link. */}
+      {/* Pause toggle — first slot from back link. */}
+      <button
+        onClick={togglePause}
+        aria-label={paused ? "Resume" : "Pause"}
+        className="absolute z-30 inline-flex h-11 w-11 items-center justify-center rounded-full bg-black/45 text-zinc-200 backdrop-blur transition-colors hover:bg-black/65 active:bg-black/80"
+        style={{
+          top: "max(0.5rem, env(safe-area-inset-top))",
+          right: "calc(max(0.5rem, env(safe-area-inset-right)) + 3.25rem)",
+        }}
+      >
+        {paused ? (
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="6,4 20,12 6,20" /></svg>
+        ) : (
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" /><rect x="14" y="4" width="4" height="16" /></svg>
+        )}
+      </button>
+
+      {/* Paused overlay. */}
+      {paused && (
+        <button
+          onClick={togglePause}
+          className="absolute inset-0 z-35 flex items-center justify-center bg-black/55 backdrop-blur-sm"
+        >
+          <div className="flex flex-col items-center gap-2">
+            <div className="font-mono text-2xl uppercase tracking-[0.4em] text-zinc-200">paused</div>
+            <div className="font-mono text-[10px] uppercase tracking-[0.25em] text-zinc-500">tap to resume</div>
+          </div>
+        </button>
+      )}
+
+      {/* Mute toggle — second slot. */}
       <button
         onClick={toggleMute}
         aria-label={muted ? "Unmute" : "Mute"}
         className="absolute z-30 inline-flex h-11 w-11 items-center justify-center rounded-full bg-black/45 text-zinc-200 backdrop-blur transition-colors hover:bg-black/65 active:bg-black/80"
         style={{
           top: "max(0.5rem, env(safe-area-inset-top))",
-          right: "calc(max(0.5rem, env(safe-area-inset-right)) + 3.25rem)",
+          right: "calc(max(0.5rem, env(safe-area-inset-right)) + 6rem)",
         }}
       >
         {muted ? (

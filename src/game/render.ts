@@ -430,6 +430,102 @@ function entityComposition(bodies: Body[]): Record<string, number> {
   return counts;
 }
 
+/** Shortest angular distance between two angles (radians). */
+function angDist(a: number, b: number): number {
+  let d = Math.abs(a - b);
+  if (d > Math.PI) d = 2 * Math.PI - d;
+  return d;
+}
+
+/**
+ * Build the bell's deformable perimeter as N (x, y) points in local
+ * space. Radius at each angle is perturbed by composition so the bell
+ * literally takes on the aspects of what it ate:
+ *   - stinger → spike bulges (upper hemisphere)
+ *   - mouth   → lobes        (lower hemisphere)
+ *   - membrane → faceted segmentation
+ *   - chloroplast → smooth swelling
+ *   - always-on sinusoidal wobble for "alive" feel
+ */
+function bellPerimeter(
+  rr: number,
+  comp: Record<string, number>,
+  t: number,
+): [number, number][] {
+  const N = 48;
+  const stingers = comp.stinger ?? 0;
+  const mouths = comp.mouth ?? 0;
+  const membranes = comp.membrane ?? 0;
+  const chloros = comp.chloroplast ?? 0;
+  const sporeCount = comp.spore ?? 0;
+  // Pre-compute spike + lobe angles so we don't recompute per-vertex.
+  const stingerAngles: number[] = [];
+  for (let s = 0; s < stingers; s++) {
+    stingerAngles.push(-Math.PI + ((s + 0.5) / stingers) * Math.PI);
+  }
+  const mouthAngles: number[] = [];
+  for (let m = 0; m < mouths; m++) {
+    mouthAngles.push(((m + 0.5) / mouths) * Math.PI);
+  }
+  const points: [number, number][] = [];
+  for (let i = 0; i < N; i++) {
+    const angle = (i / N) * Math.PI * 2 - Math.PI; // -π..+π
+    let r = rr;
+    // Organic sin wobble (animated over time + biased per spore)
+    r += Math.sin(angle * 5 + t * 0.05) * rr * 0.035;
+    if (sporeCount > 0) {
+      r += Math.sin(angle * (3 + sporeCount) + t * 0.03) * rr * 0.04;
+    }
+    // Faceted segmentation from membranes
+    if (membranes > 0) {
+      r += Math.sin(angle * (3 + membranes)) * rr * 0.05;
+    }
+    // Smooth swelling from chloroplasts
+    if (chloros > 0) {
+      r += Math.cos(angle * 2 + t * 0.02) * rr * 0.025 * Math.min(chloros, 4);
+    }
+    // Stinger spike bulges
+    for (const sa of stingerAngles) {
+      const d = angDist(angle, sa);
+      if (d < 0.45) {
+        const f = 1 - d / 0.45;
+        r += rr * 0.22 * f * f;
+      }
+    }
+    // Mouth lobes
+    for (const ma of mouthAngles) {
+      const d = angDist(angle, ma);
+      if (d < 0.55) {
+        const f = 1 - d / 0.55;
+        r += rr * 0.18 * f * f;
+      }
+    }
+    points.push([Math.cos(angle) * r, Math.sin(angle) * r]);
+  }
+  return points;
+}
+
+/** Trace a smooth closed curve through perimeter points. */
+function tracePerimeter(
+  ctx: CanvasRenderingContext2D,
+  points: [number, number][],
+): void {
+  const n = points.length;
+  // Quadratic-bezier midpoint smoothing.
+  const last = points[n - 1];
+  const first = points[0];
+  ctx.beginPath();
+  ctx.moveTo((last[0] + first[0]) / 2, (last[1] + first[1]) / 2);
+  for (let i = 0; i < n; i++) {
+    const cp = points[i];
+    const ep = points[(i + 1) % n];
+    const mx = (cp[0] + ep[0]) / 2;
+    const my = (cp[1] + ep[1]) / 2;
+    ctx.quadraticCurveTo(cp[0], cp[1], mx, my);
+  }
+  ctx.closePath();
+}
+
 function drawCore(ctx: CanvasRenderingContext2D, world: World, core: Body): void {
   const x = core.x ?? 0;
   const y = core.y ?? 0;
@@ -440,6 +536,7 @@ function drawCore(ctx: CanvasRenderingContext2D, world: World, core: Body): void
   const tentacleCount = Math.min(9, 5 + (comp.propulsion ?? 0));
   const organCount = Math.min(7, 3 + (comp.sensor ?? 0));
   const spikeCount = Math.min(8, comp.stinger ?? 0);
+  const perimeter = bellPerimeter(rr, comp, t);
 
   // Bell rotation — point tentacles opposite the velocity. Smoothly
   // lerp toward the target angle (15%/frame ≈ 150ms time-constant)
@@ -495,36 +592,34 @@ function drawCore(ctx: CanvasRenderingContext2D, world: World, core: Body): void
     ctx.stroke();
   }
 
-  // Bell (translucent dome)
+  // Bell — morphed perimeter, gradient fill
   const bell = ctx.createRadialGradient(0, -rr * 0.35, rr * 0.1, 0, 0, rr);
   bell.addColorStop(0, T.bell.bellInner);
   bell.addColorStop(0.55, T.bell.bellMid);
   bell.addColorStop(1, T.bell.bellOuter);
   ctx.fillStyle = bell;
-  ctx.beginPath();
-  ctx.arc(0, 0, rr, 0, Math.PI * 2);
+  tracePerimeter(ctx, perimeter);
   ctx.fill();
 
   ctx.strokeStyle = T.bell.rim;
   ctx.lineWidth = 1.1;
   ctx.stroke();
 
-  // Stinger spikes around the upper rim — small triangles pointing
-  // outward from the bell, count = captured stingers.
+  // Stinger spike-tips — small colored triangles at the crest of each
+  // morphed bulge, so the shape AND color cue the captured stingers.
   if (spikeCount > 0) {
     const stingerColor = currentTheme().nodeColors.stinger;
     ctx.fillStyle = stingerColor;
-    // Distribute around the upper hemisphere of the bell (-π .. 0 in
-    // canvas coords, since +y is down).
+    const bulgeR = rr * 1.22;
     for (let i = 0; i < spikeCount; i++) {
       const angle = -Math.PI + ((i + 0.5) / spikeCount) * Math.PI;
-      const baseX = Math.cos(angle) * rr;
-      const baseY = Math.sin(angle) * rr;
-      const tipX = Math.cos(angle) * rr * 1.28;
-      const tipY = Math.sin(angle) * rr * 1.28;
+      const baseX = Math.cos(angle) * bulgeR;
+      const baseY = Math.sin(angle) * bulgeR;
+      const tipX = Math.cos(angle) * bulgeR * 1.16;
+      const tipY = Math.sin(angle) * bulgeR * 1.16;
       const perpX = -Math.sin(angle);
       const perpY = Math.cos(angle);
-      const w = rr * 0.11;
+      const w = rr * 0.09;
       ctx.beginPath();
       ctx.moveTo(baseX + perpX * w, baseY + perpY * w);
       ctx.lineTo(tipX, tipY);

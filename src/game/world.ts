@@ -123,6 +123,8 @@ export class World {
   peakCaptured: number;
   /** Real-time accumulator (ms). Drives spawn cadence + run timer. */
   wallMs: number;
+  /** Player-toggled pause. tick early-returns when true. */
+  paused: boolean;
   /** Viewport in CSS pixels. Camera follow keeps the core at viewport center. */
   viewportWidth: number;
   viewportHeight: number;
@@ -178,6 +180,7 @@ export class World {
     this.runEndedAtMs = null;
     this.peakCaptured = 1;
     this.wallMs = 0;
+    this.paused = false;
     this.viewportWidth = 0;
     this.viewportHeight = 0;
     this.coreTrail = [];
@@ -286,6 +289,7 @@ export class World {
    * that don't pass a value still behave.
    */
   tick(dtMs = 1000 / 60): void {
+    if (this.paused) return;
     // Slow-mo lifecycle: when a run ends we keep ticking at scale=0.3
     // for SLOWMO_MS so the player gets a final dramatic beat before
     // the overlay snaps in. Tests that flip runStatus directly without
