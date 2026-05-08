@@ -2,6 +2,7 @@ import type { World } from "./world";
 import type { Body, NodeTypeId } from "./types";
 import { STAGE_THRESHOLDS } from "./world";
 import { currentTheme } from "@/data/themes";
+import { drawComposedPartsOver, drawComposedPartsUnder } from "./parts";
 
 /* ─── Background: ocean depth + light shafts ─────────────────────── */
 
@@ -1041,8 +1042,12 @@ export function drawBodies(
     if (b === core) continue;
     drawCell(ctx, b, world.tickN, b.id === hovered, b.id === dragging);
   }
+  // Composed parts under the bell (chloroshield halo + barbed tail)
+  drawComposedPartsUnder(ctx, world);
   if (core) drawCore(ctx, world, core);
   drawPlacedParts(ctx, world);
+  // Composed parts over the bell (spines, pincers, regen ring, surge wake)
+  drawComposedPartsOver(ctx, world);
   drawEditorOverlay(ctx, world);
 }
 

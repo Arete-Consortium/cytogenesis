@@ -5,6 +5,7 @@ import { rngFromSeed, type Rng } from "@/lib/rng";
 import { buildQuadtree, rangeQuery, type BodyQuadtree } from "./quadtree";
 import { EnvCA } from "./envCA";
 import { emptyTraitState, recomputeTraits, type TraitState } from "./traits";
+import type { TraitId } from "@/data/adjacencyRules";
 
 let nextId = 0;
 const newId = (prefix: string) => `${prefix}-${nextId++}`;
@@ -573,6 +574,14 @@ export class World {
   recentCaptures: number[];
   /** Trait IDs that were active on the previous capture, for first-acquisition toasts. */
   private prevTraitSet: Set<string>;
+  /**
+   * Trait activation order — most recently activated last. Render uses
+   * the tail of this list to pick which composed parts to show when more
+   * than 3 part-traits are active at once.
+   */
+  traitActivationOrder: string[];
+  /** Regen shield — fills with regenPerSec * dt each frame, drains on damage. */
+  regenBuffer: number;
   /** Accumulator for sub-frame d3 sim ticks during slow-mo. */
   private simAccum: number;
   private nextPredatorSpawnAt: number;
@@ -673,6 +682,8 @@ export class World {
     this.comboActiveUntilMs = 0;
     this.recentCaptures = [];
     this.prevTraitSet = new Set();
+    this.traitActivationOrder = [];
+    this.regenBuffer = 0;
     this.simAccum = 0;
     this.nextPredatorSpawnAt = PREDATOR_FIRST_SPAWN_MS;
 
@@ -817,6 +828,8 @@ export class World {
     if (this.runStatus === "running") {
       this.applySteerForce();
       this.maybeRegen();
+      this.tickRegenBuffer(scaledDt);
+      this.applyBarbedTailDamage();
       this.maybeRunEcology();
       this.maybeRespawnCentipede();
     }
@@ -1614,7 +1627,7 @@ export class World {
         // shouldn't be able to ram the head harmlessly).
         const isLungeHit = c.attackPhase === "lunge";
         const dmgMul = isLungeHit ? LUNGE_DAMAGE_MUL : 1;
-        this.damageAbsorbed(CENTIPEDE_PLAYER_DAMAGE * dmgMul);
+        this.damageAbsorbed(CENTIPEDE_PLAYER_DAMAGE * dmgMul, head);
         this.addShake(isLungeHit ? 22 : 12);
         this.events.push(isLungeHit ? "lungeHit" : "hit");
         this.emitSparkle(cx, cy, "rgba(248, 113, 113,");
@@ -1776,7 +1789,7 @@ export class World {
       const qdy = cy - (h.body.y ?? 0);
       const qr = h.body.radius + (core?.radius ?? 18);
       if (qdx * qdx + qdy * qdy <= qr * qr) {
-        this.damageAbsorbed(HIVE_QUEEN_DAMAGE);
+        this.damageAbsorbed(HIVE_QUEEN_DAMAGE, h.body);
         this.addShake(10);
         this.events.push("hit");
         this.emitSparkle(cx, cy, "rgba(248, 113, 113,");
@@ -1800,7 +1813,7 @@ export class World {
           const ddy = cy - (d.y ?? 0);
           const dr = d.radius + (core?.radius ?? 18);
           if (ddx * ddx + ddy * ddy <= dr * dr) {
-            this.damageAbsorbed(HIVE_DRONE_DAMAGE);
+            this.damageAbsorbed(HIVE_DRONE_DAMAGE, d);
             this.addShake(6);
             this.events.push("hit");
             this.emitSparkle(cx, cy, "rgba(248, 113, 113,");
@@ -1859,7 +1872,7 @@ export class World {
       if (ddx * ddx + ddy * ddy <= dr * dr) {
         const stingerBite = m.mirroredAbsorbed.stinger ?? 0;
         const damage = 3 + Math.min(6, stingerBite);
-        this.damageAbsorbed(damage);
+        this.damageAbsorbed(damage, m.body);
         this.addShake(12);
         this.events.push("hit");
         this.emitSparkle(cx, cy, "rgba(248, 113, 113,");
@@ -1991,7 +2004,7 @@ export class World {
       const hdy = cy - v.y;
       const hr = (core?.radius ?? 18) + 5;
       if (hdx * hdx + hdy * hdy <= hr * hr) {
-        this.damageAbsorbed(PHAGE_VIRION_DAMAGE);
+        this.damageAbsorbed(PHAGE_VIRION_DAMAGE, p.body);
         this.addShake(10);
         this.events.push("hit");
         this.emitSparkle(cx, cy, "rgba(248, 113, 113,");
@@ -2006,7 +2019,7 @@ export class World {
       const bdy = cy - (p.body.y ?? 0);
       const br = p.body.radius + (core?.radius ?? 18);
       if (bdx * bdx + bdy * bdy <= br * br) {
-        this.damageAbsorbed(3);
+        this.damageAbsorbed(3, p.body);
         this.addShake(8);
         this.events.push("hit");
         this.emitSparkle(cx, cy, "rgba(248, 113, 113,");
@@ -2073,7 +2086,7 @@ export class World {
       const cdy = cy - (c.body.y ?? 0);
       const cr = c.body.radius + (core?.radius ?? 18);
       if (cdx * cdx + cdy * cdy <= cr * cr) {
-        this.damageAbsorbed(CILIATE_PLAYER_DAMAGE);
+        this.damageAbsorbed(CILIATE_PLAYER_DAMAGE, c.body);
         this.addShake(11);
         this.events.push("hit");
         this.emitSparkle(cx, cy, "rgba(248, 113, 113,");
@@ -2216,7 +2229,7 @@ export class World {
 
       const isBrute = p.variant === "brute";
       const damage = isBrute ? HIT_DAMAGE_BRUTE : HIT_DAMAGE_SKIRMISHER;
-      this.damageAbsorbed(damage);
+      this.damageAbsorbed(damage, p);
       this.addShake(isBrute ? 14 : 8);
       this.events.push("hit");
 
@@ -2248,13 +2261,26 @@ export class World {
    * recomputes the stage, emits devolve / death events as needed.
    * Replaces the legacy pruneFromGraph in the absorb-counter model.
    */
-  damageAbsorbed(amount: number): void {
+  damageAbsorbed(amount: number, attacker?: Body): void {
     // Mark damage tick — render uses this for bell hit-flash.
     this.lastDamageTickN = this.tickN;
+    // Chloroshield: scale incoming damage before any absorption.
+    let scaled = amount * this.traits.damageTakenMul;
+    // Regen shield: drain the buffer first.
+    if (this.regenBuffer > 0) {
+      const fromBuffer = Math.min(this.regenBuffer, scaled);
+      this.regenBuffer -= fromBuffer;
+      scaled -= fromBuffer;
+    }
+    // Spines: predator that contacted the bell takes recoil damage.
+    if (attacker && attacker.kind === "predator" && this.traits.recoilDamage > 0 && attacker.health != null) {
+      attacker.health -= this.traits.recoilDamage;
+    }
+    if (scaled <= 0) return;
     // Membrane armor: each absorbed membrane reduces incoming damage
     // by 1, with a floor of 1 so you always feel the hit.
     const armor = this.absorbed.membrane ?? 0;
-    let remaining = Math.max(1, amount - armor);
+    let remaining = Math.max(1, Math.ceil(scaled) - armor);
     while (remaining > 0 && this.totalAbsorbed > 0) {
       // Pick a random non-zero absorbed type to drain.
       const candidates: NodeTypeId[] = [];
@@ -2591,6 +2617,36 @@ export class World {
   }
 
   /**
+   * Pincers proc — fires at the nearest predator (any range, no lock-on
+   * cooldown gate) when the player captures a free cell. Skips the
+   * tracer/audio so multiple procs per capture don't spam the channel.
+   */
+  private fireNearestStingerProc(): void {
+    if (this.entityBodies.length === 0) return;
+    if (this.predators.length === 0) return;
+    const core = this.entityBodies[0];
+    const cx = core.x ?? 0;
+    const cy = core.y ?? 0;
+    let nearest: Body | null = null;
+    let nearestDistSq = Infinity;
+    for (const p of this.predators) {
+      const dx = (p.x ?? 0) - cx;
+      const dy = (p.y ?? 0) - cy;
+      const d2 = dx * dx + dy * dy;
+      if (d2 < nearestDistSq) {
+        nearest = p;
+        nearestDistSq = d2;
+      }
+    }
+    if (!nearest || nearest.health == null) return;
+    nearest.health -= 1;
+    // Tail-end death cleanup matches the existing fireStinger paths;
+    // we keep this proc simple and just nudge HP. Boss-specific cleanup
+    // (centipede sever, queen drone removal) runs through the normal
+    // attack path.
+  }
+
+  /**
    * Player input: fire a stinger projectile at a predator. Reuses the
    * lock-on trait + cooldown. Damage = stinger count. Hit is instant
    * (raycast), with a brief tracer pushed for the visual flash.
@@ -2704,6 +2760,60 @@ export class World {
    * to the lowest-count non-core absorbed type. No-op without
    * chloroplasts. Skips if entity is already at peak (transcend).
    */
+  /**
+   * barbed_tail trait — predators behind the player's motion vector
+   * within tailLength units take tailDamage per tick of contact.
+   * "Behind" = the predator's vector from core has a negative dot product
+   * with the player's velocity (i.e., it's trailing).
+   */
+  private applyBarbedTailDamage(): void {
+    if (this.traits.tailDamage <= 0) return;
+    if (this.predators.length === 0) return;
+    const core = this.entityBodies[0];
+    if (!core) return;
+    const vx = core.vx ?? 0;
+    const vy = core.vy ?? 0;
+    const vlen = Math.hypot(vx, vy);
+    if (vlen < 0.05) return; // tail is inert when stationary
+    const ux = vx / vlen;
+    const uy = vy / vlen;
+    const cx = core.x ?? 0;
+    const cy = core.y ?? 0;
+    const len = this.traits.tailLength;
+    const lenSq = len * len;
+    const halfWidth = 18;
+    const halfWidthSq = halfWidth * halfWidth;
+    for (const p of this.predators) {
+      if (p.health == null) continue;
+      const dx = (p.x ?? 0) - cx;
+      const dy = (p.y ?? 0) - cy;
+      // Behind = dot product with motion vector is negative.
+      const along = dx * ux + dy * uy;
+      if (along > 0) continue;
+      if (along < -len) continue;
+      const distSq = dx * dx + dy * dy;
+      if (distSq > lenSq) continue;
+      // Perpendicular distance from the tail axis.
+      const perpSq = distSq - along * along;
+      if (perpSq > halfWidthSq) continue;
+      p.health -= this.traits.tailDamage;
+    }
+  }
+
+  /**
+   * Evolution v2 regen trait — fills a damage-absorbing buffer over time.
+   * Capacity scales with regen level; depletion runs through damageAbsorbed.
+   */
+  private tickRegenBuffer(scaledDtMs: number): void {
+    const rps = this.traits.regenPerSec;
+    if (rps <= 0) {
+      this.regenBuffer = 0;
+      return;
+    }
+    const cap = this.traits.levels.regen * 3;
+    this.regenBuffer = Math.min(cap, this.regenBuffer + rps * (scaledDtMs / 1000));
+  }
+
   private maybeRegen(): void {
     const chloros = this.absorbed.chloroplast ?? 0;
     if (chloros <= 0) return;
@@ -2818,9 +2928,26 @@ export class World {
     for (const id of this.traits.active) {
       if (!this.prevTraitSet.has(id)) {
         this.events.push(`trait:${id}` as WorldEvent);
+        // Move to end of activation order — render uses tail of this list
+        // when more than 3 part-traits are active.
+        const i = this.traitActivationOrder.indexOf(id);
+        if (i >= 0) this.traitActivationOrder.splice(i, 1);
+        this.traitActivationOrder.push(id);
       }
     }
+    // Drop deactivated traits from the order so the cap-3 selection
+    // doesn't keep referencing stale entries after devolution.
+    this.traitActivationOrder = this.traitActivationOrder.filter((id) =>
+      this.traits.active.has(id as TraitId),
+    );
     this.prevTraitSet = new Set(this.traits.active);
+
+    // Pincers: each capture procs an extra stinger hit on the nearest predator.
+    if (this.traits.pincerProcs > 0) {
+      for (let i = 0; i < this.traits.pincerProcs; i++) {
+        this.fireNearestStingerProc();
+      }
+    }
 
     // Grow the core's physics radius with stage so the capture surface
     // scales as the blob evolves.
