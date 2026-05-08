@@ -55,7 +55,13 @@ test.describe("cytogenesis smoke", () => {
     await expect(page.getByRole("button", { name: "Resume", exact: true })).toBeVisible();
   });
 
-  test("security headers are applied", async ({ request }) => {
+  // Headers in vercel.json are applied by Vercel's edge, not by `next start`,
+  // so this check only runs when the target is a Vercel-served URL.
+  test("security headers are applied (Vercel target only)", async ({ request, baseURL }) => {
+    test.skip(
+      !baseURL || !/vercel\.app|cytogenesis\./.test(baseURL),
+      "vercel.json headers only apply on Vercel-served targets",
+    );
     const res = await request.get("/");
     expect(res.status()).toBe(200);
     const headers = res.headers();
