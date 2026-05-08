@@ -139,12 +139,12 @@ export default function GameCanvas() {
     // Subject returns null for free cells — only entity-graph nodes
     // are draggable. Free cells respond to clicks (lock-on) instead.
     //
-    // Drag pin is capped to MAX_STEER world units from the body's
-    // current position. With camera-follow, holding finger off-center
-    // produces continuous drift in that direction — flOw / Osmos
-    // thumbstick feel. Without the cap the pin would race the camera
-    // each frame.
-    const MAX_STEER = 60;
+    // Drag pin is capped to MAX_STEER world units past the body. d3
+    // force.fx is a HARD pin — the body teleports to fx each tick — so
+    // the cap is effectively the per-frame max speed. 8wu/tick caps at
+    // ~480wu/sec, which traverses the 3000wu arena in ~6s. 60 was
+    // shipping the entity off-screen ("jets top-left").
+    const MAX_STEER = 8;
     const applyCappedPin = (body: { x?: number; y?: number; fx?: number | null; fy?: number | null }, tx: number, ty: number) => {
       const cx = body.x ?? 0;
       const cy = body.y ?? 0;
@@ -377,11 +377,11 @@ export default function GameCanvas() {
         </div>
       )}
 
-      {/* Bottom hint — fades after the player has bonded a few cells. */}
-      {stats.captured < 4 && (
+      {/* Bottom hint — fades after the player has bonded a couple cells. */}
+      {stats.captured < 3 && (
         <div
-          className="pointer-events-none absolute bottom-2 left-1/2 max-w-[92vw] -translate-x-1/2 text-center font-mono text-[10px] text-zinc-400/70 transition-opacity"
-          style={{ bottom: "max(0.75rem, env(safe-area-inset-bottom))" }}
+          className="pointer-events-none absolute bottom-2 left-1/2 max-w-[92vw] -translate-x-1/2 rounded-full bg-black/55 px-3 py-1.5 text-center font-mono text-[10px] text-zinc-200/85 backdrop-blur-sm transition-opacity"
+          style={{ bottom: "max(1rem, env(safe-area-inset-bottom))" }}
         >
           <span className="hidden sm:inline">drag the bell to swim · scroll or pinch to zoom</span>
           <span className="sm:hidden">drag the bell to swim · pinch to zoom</span>

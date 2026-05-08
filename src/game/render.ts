@@ -102,11 +102,12 @@ export function drawEnvCA(ctx: CanvasRenderingContext2D, world: World): void {
     for (let i = 0; i < ca.cells.length; i++) {
       const k = i * 4;
       if (ca.cells[i]) {
-        // Soft sea-glass cyan
+        // Soft sea-glass cyan, low alpha so it stays an underlay
+        // and never competes with the creatures.
         data[k] = 96;
-        data[k + 1] = 220;
-        data[k + 2] = 200;
-        data[k + 3] = 96;
+        data[k + 1] = 200;
+        data[k + 2] = 190;
+        data[k + 3] = 28;
       } else {
         data[k + 3] = 0;
       }
@@ -114,15 +115,18 @@ export function drawEnvCA(ctx: CanvasRenderingContext2D, world: World): void {
     bctx.putImageData(img, 0, 0);
     caBufferLastSteps = ca.steps;
   }
+  // Tile the CA buffer 3×3 around the arena so the torus edge never
+  // shows as a hard rectangle when the player drifts to the boundary.
   const a = ca.arenaHalf;
+  const span = a * 2;
   const prev = ctx.imageSmoothingEnabled;
   ctx.imageSmoothingEnabled = true;
-  // imageSmoothingQuality is widely supported; high gives the bloom feel.
-  const prevQ = ctx.imageSmoothingQuality;
-  ctx.imageSmoothingQuality = "high";
-  ctx.drawImage(caBuffer, -a, -a, a * 2, a * 2);
+  for (let tx = -1; tx <= 1; tx++) {
+    for (let ty = -1; ty <= 1; ty++) {
+      ctx.drawImage(caBuffer, -a + tx * span, -a + ty * span, span, span);
+    }
+  }
   ctx.imageSmoothingEnabled = prev;
-  ctx.imageSmoothingQuality = prevQ;
 }
 
 /* ─── Bonds (curved tissue) ──────────────────────────────────────── */
@@ -411,13 +415,13 @@ function drawCore(ctx: CanvasRenderingContext2D, world: World, core: Body): void
   const breath = 1 + Math.sin(t * 0.04) * 0.06;
   const rr = core.radius * 1.55 * breath;
 
-  // Outer halo
-  const halo = ctx.createRadialGradient(x, y, rr * 0.5, x, y, rr * 3.6);
-  halo.addColorStop(0, "rgba(64, 220, 255, 0.45)");
+  // Outer halo — kept tight so it doesn't bloom across the screen
+  const halo = ctx.createRadialGradient(x, y, rr * 0.6, x, y, rr * 2.4);
+  halo.addColorStop(0, "rgba(64, 220, 255, 0.28)");
   halo.addColorStop(1, "rgba(64, 220, 255, 0)");
   ctx.fillStyle = halo;
   ctx.beginPath();
-  ctx.arc(x, y, rr * 3.6, 0, Math.PI * 2);
+  ctx.arc(x, y, rr * 2.4, 0, Math.PI * 2);
   ctx.fill();
 
   // 5 tentacles (drawn before bell so the bell occludes their roots)
