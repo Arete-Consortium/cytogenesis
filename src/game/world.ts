@@ -210,6 +210,10 @@ const CENTIPEDE_LEVEL_REWARD: Record<number, NodeTypeId> = {
   2: "membrane",
   3: "mitochondrion",
 };
+/** Breather window between killing one centipede and the next spawning. */
+const CENTIPEDE_RESPAWN_DELAY_MS = 3500;
+/** Initial spawn delay so player has a moment to orient at run start. */
+const CENTIPEDE_INITIAL_SPAWN_DELAY_MS = 2000;
 
 /** Free-cell ecology tuning. */
 const ECOLOGY_INTERVAL_MS = 4000;
@@ -305,6 +309,8 @@ export class World {
     /** tickN at which centipede can damage the player again. */
     nextDamageTickN: number;
   } | null;
+  /** wallMs at which to spawn the next centipede; null = no spawn pending. */
+  nextCentipedeAtMs: number | null;
   /** Wallclock at which the next chloroplast regen will fire. */
   private nextRegenAtMs: number;
   /** Wallclock at which the next ecology pass will fire. */
@@ -384,6 +390,9 @@ export class World {
     this.bossesDefeated = 0;
     this.nextMilestoneIndex = 0;
     this.centipede = null;
+    // Schedule the first centipede shortly after run start so the
+    // player isn't dropped straight into the boss fight.
+    this.nextCentipedeAtMs = CENTIPEDE_INITIAL_SPAWN_DELAY_MS;
     this.nextRegenAtMs = 0;
     this.nextEcologyAtMs = 4000;
     this.viewportWidth = 0;
@@ -532,6 +541,7 @@ export class World {
       this.applySteerForce();
       this.maybeRegen();
       this.maybeRunEcology();
+      this.maybeRespawnCentipede();
     }
     this.integrateFree(scale);
     this.integrateCentipede(scale);
@@ -662,16 +672,15 @@ export class World {
   }
 
   /**
-   * Fire deferred biome/boss milestones if the player has crossed the
-   * next threshold AND the previous boss is dead. Loop in case
-   * multiple thresholds were crossed during a long boss fight.
+   * Fire biome milestones as the player crosses thresholds. Bosses are
+   * NO LONGER tied to milestones — the centipede spawns at run start
+   * and respawns after each kill, so milestones are now purely
+   * cosmetic (biome darken, transcend toast).
    */
   private checkMilestones(): void {
     while (this.nextMilestoneIndex < BIOME_MILESTONES.length) {
       const next = BIOME_MILESTONES[this.nextMilestoneIndex];
       if (this.totalAbsorbed < next) break;
-      const bossAlive = this.predators.some((p) => p.bossKind);
-      if (bossAlive) break;
       this.events.push(`biome:${next}` as WorldEvent);
       this.addShake(8);
       this.biomeStage = Math.min(this.biomeStage + 1, 4);
@@ -679,8 +688,6 @@ export class World {
         this.addShake(18);
         this.events.push("transcend");
       }
-      const bossKind = BOSS_KIND_BY_BIOME[next];
-      if (bossKind) this.spawnBoss(bossKind, next);
       this.nextMilestoneIndex += 1;
     }
   }
@@ -1045,7 +1052,10 @@ export class World {
     this.addShake(6);
   }
 
-  /** Kill the centipede entirely: clear head + segments, fire reward. */
+  /**
+   * Kill the centipede entirely: clear head + segments, fire reward,
+   * spawn the next one at level cycling 1→2→3→1.
+   */
   private killCentipede(): void {
     const c = this.centipede;
     if (!c) return;
@@ -1066,6 +1076,21 @@ export class World {
     this.traits = recomputeTraits(this.absorbed);
     this.centipede = null;
     this.checkMilestones();
+    // Auto-spawn the next centipede after a brief breather (handled by
+    // the tick loop via maybeRespawnCentipede so the player gets a beat
+    // to collect the reward + reposition).
+    this.nextCentipedeAtMs = this.wallMs + CENTIPEDE_RESPAWN_DELAY_MS;
+  }
+
+  /** Spawn the next centipede when the breather window has elapsed. */
+  private maybeRespawnCentipede(): void {
+    if (this.centipede) return;
+    if (this.nextCentipedeAtMs == null) return;
+    if (this.wallMs < this.nextCentipedeAtMs) return;
+    this.nextCentipedeAtMs = null;
+    // Cycle level 1 → 2 → 3 → 1 across kills.
+    const nextLevel = (this.bossesDefeated % 3) + 1;
+    this.spawnCentipede(nextLevel);
   }
 
   /**
