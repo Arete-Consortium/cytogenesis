@@ -138,36 +138,78 @@ const COMBO_RADIUS_BONUS = 8;
  */
 const BIOME_MILESTONES = [20, 40, 60, 90, 130, 180, 240, 310, 400, 500, 620];
 
-/** Boss kind per milestone — three bosses cycle through endlessly. */
+/**
+ * Each biome milestone spawns a centipede. Per-milestone "level"
+ * (1/2/3, repeating) drives reward type + stat scaling on top of
+ * cycleRound. The centipede is the single boss creature now —
+ * skirmisher / brute / swarm-lord / tide-maw / abyss-eye are all
+ * gone.
+ */
 const BOSS_KIND_BY_BIOME: Record<number, BossKind> = {
-  20: "swarmLord",
-  40: "tideMaw",
-  60: "abyssEye",
-  90: "swarmLord",
-  130: "tideMaw",
-  180: "abyssEye",
-  240: "swarmLord",
-  310: "tideMaw",
-  400: "abyssEye",
-  500: "swarmLord",
-  620: "tideMaw",
+  20: "centipede",
+  40: "centipede",
+  60: "centipede",
+  90: "centipede",
+  130: "centipede",
+  180: "centipede",
+  240: "centipede",
+  310: "centipede",
+  400: "centipede",
+  500: "centipede",
+  620: "centipede",
 };
+/** Level (1/2/3) per milestone — drives reward type + difficulty. */
+const CENTIPEDE_LEVEL_BY_BIOME: Record<number, number> = {
+  20: 1,
+  40: 2,
+  60: 3,
+  90: 1,
+  130: 2,
+  180: 3,
+  240: 1,
+  310: 2,
+  400: 3,
+  500: 1,
+  620: 2,
+};
+/** Boss kind = always centipede now. Different per-level stats below. */
 const BOSS_HEALTH: Record<BossKind, number> = {
-  swarmLord: 20,
-  tideMaw: 30,
-  abyssEye: 40,
+  swarmLord: 20,    // legacy, unused
+  tideMaw: 30,      // legacy, unused
+  abyssEye: 40,     // legacy, unused
+  centipede: 24,    // base; scales per level + cycle
 };
 const BOSS_RADIUS: Record<BossKind, number> = {
   swarmLord: 22,
   tideMaw: 32,
   abyssEye: 28,
+  centipede: 22,
 };
 const BOSS_REWARD_TYPE: Record<BossKind, NodeTypeId> = {
-  swarmLord: "chloroplast", // regen
-  tideMaw: "membrane",      // armor
-  abyssEye: "mitochondrion", // cooldown
+  swarmLord: "chloroplast",
+  tideMaw: "membrane",
+  abyssEye: "mitochondrion",
+  centipede: "membrane", // overridden per-level in killCentipede
 };
 const BOSS_REWARD_AMOUNT = 5;
+
+/** Centipede tuning. */
+const CENTIPEDE_HEAD_SPEED = 0.55;
+const CENTIPEDE_AGGRO_HEALTH_FRAC = 0.4;
+const CENTIPEDE_INITIAL_SEGMENTS = 3;
+const CENTIPEDE_MAX_SEGMENTS = 14;
+const CENTIPEDE_SEGMENT_SPACING_TICKS = 6;
+const CENTIPEDE_HISTORY_MAX =
+  CENTIPEDE_MAX_SEGMENTS * CENTIPEDE_SEGMENT_SPACING_TICKS + 8;
+const CENTIPEDE_EAT_RANGE = 18;
+const CENTIPEDE_PLAYER_DAMAGE = 5;
+const CENTIPEDE_PLAYER_DAMAGE_COOLDOWN_TICKS = 60;
+/** Per-milestone reward type override + base level scaling. */
+const CENTIPEDE_LEVEL_REWARD: Record<number, NodeTypeId> = {
+  1: "chloroplast",
+  2: "membrane",
+  3: "mitochondrion",
+};
 
 /** Free-cell ecology tuning. */
 const ECOLOGY_INTERVAL_MS = 4000;
@@ -252,6 +294,17 @@ export class World {
   bossesDefeated: number;
   /** Index into BIOME_MILESTONES — only advances when a boss isn't already on the field. */
   private nextMilestoneIndex: number;
+  /** Active centipede boss; null between fights. */
+  centipede: {
+    level: number;
+    cycleRound: number;
+    head: Body;
+    segments: Body[];
+    /** Newest position at index 0; segment N reads from index N*SPACING. */
+    positionHistory: { x: number; y: number }[];
+    /** tickN at which centipede can damage the player again. */
+    nextDamageTickN: number;
+  } | null;
   /** Wallclock at which the next chloroplast regen will fire. */
   private nextRegenAtMs: number;
   /** Wallclock at which the next ecology pass will fire. */
@@ -330,6 +383,7 @@ export class World {
     this.biomeStage = 0;
     this.bossesDefeated = 0;
     this.nextMilestoneIndex = 0;
+    this.centipede = null;
     this.nextRegenAtMs = 0;
     this.nextEcologyAtMs = 4000;
     this.viewportWidth = 0;
@@ -475,20 +529,19 @@ export class World {
     const scaledDt = dtMs * scale;
     this.envCA.update(scaledDt);
     if (this.runStatus === "running") {
-      this.maybeSpawnPredator();
-      this.resolveTelegraphs();
       this.applySteerForce();
       this.maybeRegen();
       this.maybeRunEcology();
     }
     this.integrateFree(scale);
-    this.integratePredators(scale);
+    this.integrateCentipede(scale);
     this.simAccum += scale;
     while (this.simAccum >= 1) {
       this.sim.tick();
       this.simAccum -= 1;
     }
-    if (this.runStatus === "running") this.resolveHits();
+    // Centipede contact damage runs inside integrateCentipede now;
+    // resolveHits is no-op (legacy skirmisher/brute system retired).
     this.updateCameraFollow();
     this.updateCoreTrail();
     this.updateSparkles();
@@ -627,7 +680,7 @@ export class World {
         this.events.push("transcend");
       }
       const bossKind = BOSS_KIND_BY_BIOME[next];
-      if (bossKind) this.spawnBoss(bossKind);
+      if (bossKind) this.spawnBoss(bossKind, next);
       this.nextMilestoneIndex += 1;
     }
   }
@@ -751,42 +804,268 @@ export class World {
   }
 
   /**
-   * Spawn a boss for the given biome. Bosses go into this.predators
-   * (reusing AI + collision pipeline) but are tagged via bossKind so
-   * the render + death paths special-case them. HP scales 1.5× per
-   * cycle past the first encounter so endless-mode rematches are
-   * meaningfully harder.
+   * Spawn a centipede boss for the given biome milestone. The
+   * centipede is the only boss creature now — head + initial 3
+   * segments, eats free cells to grow, dies when its head HP hits 0.
    */
-  private spawnBoss(kind: BossKind): void {
+  private spawnBoss(_kind: BossKind, milestone: number): void {
+    const level = CENTIPEDE_LEVEL_BY_BIOME[milestone] ?? 1;
+    this.spawnCentipede(level);
+  }
+
+  private spawnCentipede(level: number): void {
     const core = this.entityBodies[0];
     const cx = core?.x ?? 0;
     const cy = core?.y ?? 0;
     const angle = this.rng.next() * Math.PI * 2;
-    const spawnDist = 600;
-    let bx = cx + Math.cos(angle) * spawnDist;
-    let by = cy + Math.sin(angle) * spawnDist;
+    const spawnDist = 700;
     const a = this.arenaHalf;
-    bx = Math.max(-a, Math.min(a, bx));
-    by = Math.max(-a, Math.min(a, by));
+    const hx = Math.max(-a, Math.min(a, cx + Math.cos(angle) * spawnDist));
+    const hy = Math.max(-a, Math.min(a, cy + Math.sin(angle) * spawnDist));
     const cycle = this.cycleRound();
-    const cycleMul = Math.pow(1.5, cycle);
-    const radius = BOSS_RADIUS[kind] * (1 + cycle * 0.08);
-    const health = Math.round(BOSS_HEALTH[kind] * cycleMul);
-    this.predators.push({
-      id: newId(`boss-${kind}`),
+    const cycleMul = Math.pow(1.4, cycle);
+    const levelMul = 1 + (level - 1) * 0.4;
+    const headRadius =
+      BOSS_RADIUS.centipede * (1 + cycle * 0.05) * (1 + (level - 1) * 0.08);
+    const health = Math.round(BOSS_HEALTH.centipede * cycleMul * levelMul);
+    const head: Body = {
+      id: newId("centipede-head"),
       type: "spore",
       kind: "predator",
-      radius,
-      x: bx,
-      y: by,
+      radius: headRadius,
+      x: hx,
+      y: hy,
       vx: 0,
       vy: 0,
       variant: "brute",
       health,
-      bossKind: kind,
-    });
+      bossKind: "centipede",
+      segmentIndex: 0,
+    };
+    this.predators.push(head);
+
+    const segments: Body[] = [];
+    for (let i = 0; i < CENTIPEDE_INITIAL_SEGMENTS; i++) {
+      const seg: Body = {
+        id: newId("centipede-seg"),
+        type: "spore",
+        kind: "predator",
+        radius: headRadius * 0.7,
+        x: hx,
+        y: hy,
+        vx: 0,
+        vy: 0,
+        bossKind: "centipede",
+        segmentIndex: i + 1,
+      };
+      segments.push(seg);
+      this.predators.push(seg);
+    }
+
+    this.centipede = {
+      level,
+      cycleRound: cycle,
+      head,
+      segments,
+      positionHistory: [{ x: hx, y: hy }],
+      nextDamageTickN: 0,
+    };
     this.events.push("bossSpawn");
     this.addShake(15);
+  }
+
+  /**
+   * Drive the centipede each tick: head AI (wander toward free-cell
+   * cluster, switch to player chase when wounded), eat-on-contact,
+   * push position history, position segments along the trail, damage
+   * the player on head contact.
+   */
+  private integrateCentipede(scale: number): void {
+    const c = this.centipede;
+    if (!c) return;
+    const head = c.head;
+    const a = this.arenaHalf;
+    const span = a * 2;
+    const core = this.entityBodies[0];
+    const cx = core?.x ?? 0;
+    const cy = core?.y ?? 0;
+
+    // ── Target selection ─────────────────────────────────────────────
+    // Switch to player-chase when health drops or chain is full.
+    const enraged =
+      (head.health ?? 0) < BOSS_HEALTH.centipede * CENTIPEDE_AGGRO_HEALTH_FRAC ||
+      c.segments.length >= CENTIPEDE_MAX_SEGMENTS;
+    let tx: number;
+    let ty: number;
+    if (enraged) {
+      tx = cx;
+      ty = cy;
+    } else {
+      // Find nearest free cell.
+      let bestDx = 0;
+      let bestDy = 0;
+      let bestSq = Infinity;
+      for (const f of this.freeBodies) {
+        const dx = (f.x ?? 0) - (head.x ?? 0);
+        const dy = (f.y ?? 0) - (head.y ?? 0);
+        const sq = dx * dx + dy * dy;
+        if (sq < bestSq) {
+          bestSq = sq;
+          bestDx = dx;
+          bestDy = dy;
+        }
+      }
+      tx = (head.x ?? 0) + bestDx;
+      ty = (head.y ?? 0) + bestDy;
+    }
+
+    // ── Move head toward target ──────────────────────────────────────
+    const dx = tx - (head.x ?? 0);
+    const dy = ty - (head.y ?? 0);
+    const len = Math.hypot(dx, dy) || 1;
+    const speed = CENTIPEDE_HEAD_SPEED * (1 + c.cycleRound * 0.1) * (1 + (c.level - 1) * 0.1);
+    head.vx = (dx / len) * speed;
+    head.vy = (dy / len) * speed;
+    head.x = (head.x ?? 0) + head.vx * scale;
+    head.y = (head.y ?? 0) + head.vy * scale;
+    // Wrap.
+    let hx = head.x ?? 0;
+    let hy = head.y ?? 0;
+    if (hx > a) hx -= span;
+    else if (hx < -a) hx += span;
+    if (hy > a) hy -= span;
+    else if (hy < -a) hy += span;
+    head.x = hx;
+    head.y = hy;
+
+    // ── Push history + position segments ─────────────────────────────
+    c.positionHistory.unshift({ x: head.x, y: head.y });
+    if (c.positionHistory.length > CENTIPEDE_HISTORY_MAX) {
+      c.positionHistory.length = CENTIPEDE_HISTORY_MAX;
+    }
+    for (let i = 0; i < c.segments.length; i++) {
+      const idx = (i + 1) * CENTIPEDE_SEGMENT_SPACING_TICKS;
+      const p = c.positionHistory[Math.min(idx, c.positionHistory.length - 1)];
+      const seg = c.segments[i];
+      seg.x = p.x;
+      seg.y = p.y;
+    }
+
+    // ── Eat free cells on head contact ──────────────────────────────
+    if (c.segments.length < CENTIPEDE_MAX_SEGMENTS) {
+      for (let i = this.freeBodies.length - 1; i >= 0; i--) {
+        const f = this.freeBodies[i];
+        const ddx = (f.x ?? 0) - (head.x ?? 0);
+        const ddy = (f.y ?? 0) - (head.y ?? 0);
+        const r = head.radius + f.radius + CENTIPEDE_EAT_RANGE;
+        if (ddx * ddx + ddy * ddy <= r * r) {
+          this.freeBodies.splice(i, 1);
+          this.appendCentipedeSegment();
+          break; // one eat per tick keeps it fair
+        }
+      }
+    }
+
+    // ── Damage player on head contact ───────────────────────────────
+    if (this.tickN >= c.nextDamageTickN) {
+      const cdx = cx - (head.x ?? 0);
+      const cdy = cy - (head.y ?? 0);
+      const cr = head.radius + (core?.radius ?? 18);
+      if (cdx * cdx + cdy * cdy <= cr * cr) {
+        this.damageAbsorbed(CENTIPEDE_PLAYER_DAMAGE);
+        this.addShake(12);
+        this.events.push("hit");
+        this.emitSparkle(cx, cy, "rgba(248, 113, 113,");
+        c.nextDamageTickN = this.tickN + CENTIPEDE_PLAYER_DAMAGE_COOLDOWN_TICKS;
+        // Toxic-bell counter: stinger absorbs damage the head.
+        const stingers = this.absorbed.stinger ?? 0;
+        if (stingers > 0 && head.health != null) {
+          head.health -= stingers;
+          if (head.health <= 0) {
+            this.killCentipede();
+            return;
+          }
+        }
+      }
+    }
+  }
+
+  private appendCentipedeSegment(): void {
+    const c = this.centipede;
+    if (!c) return;
+    const seg: Body = {
+      id: newId("centipede-seg"),
+      type: "spore",
+      kind: "predator",
+      radius: c.head.radius * 0.7,
+      x: c.head.x ?? 0,
+      y: c.head.y ?? 0,
+      vx: 0,
+      vy: 0,
+      bossKind: "centipede",
+      segmentIndex: c.segments.length + 1,
+    };
+    c.segments.push(seg);
+    this.predators.push(seg);
+  }
+
+  /**
+   * Sever the chain at the given segment index — that segment + every
+   * one behind it gets converted back to free cells (the centipede
+   * coughs up its meals). Caller is responsible for damaging the head
+   * separately if the head was the target.
+   */
+  severCentipedeAt(segmentIndex: number): void {
+    const c = this.centipede;
+    if (!c) return;
+    if (segmentIndex < 0 || segmentIndex >= c.segments.length) return;
+    const cut = c.segments.splice(segmentIndex);
+    for (const seg of cut) {
+      // Remove from predators.
+      const pi = this.predators.indexOf(seg);
+      if (pi >= 0) this.predators.splice(pi, 1);
+      // Convert back to a free cell — random non-core type.
+      const types = FREE_POOL.filter((t) => t !== "core");
+      const reborn: Body = {
+        id: newId("reborn"),
+        type: this.rng.pick(types),
+        kind: "free",
+        radius: NODE_RADIUS[this.rng.pick(types)] ?? 7,
+        x: seg.x ?? 0,
+        y: seg.y ?? 0,
+        vx: this.rng.range(-MAX_FREE_SPEED, MAX_FREE_SPEED),
+        vy: this.rng.range(-MAX_FREE_SPEED, MAX_FREE_SPEED),
+      };
+      // Keep within population cap.
+      if (this.freeBodies.length < FREE_POP_MAX) {
+        this.freeBodies.push(reborn);
+      }
+    }
+    this.emitSparkle(c.head.x ?? 0, c.head.y ?? 0, "rgba(248, 113, 113,");
+    this.addShake(6);
+  }
+
+  /** Kill the centipede entirely: clear head + segments, fire reward. */
+  private killCentipede(): void {
+    const c = this.centipede;
+    if (!c) return;
+    // Remove all centipede bodies from predators.
+    this.predators = this.predators.filter((p) => p.bossKind !== "centipede");
+    this.emitSparkle(c.head.x ?? 0, c.head.y ?? 0, "rgba(248, 113, 113,");
+    this.addShake(20);
+    this.events.push("killBoss");
+    this.bossesDefeated += 1;
+    const rewardType = CENTIPEDE_LEVEL_REWARD[c.level] ?? "membrane";
+    const cycleMul = Math.pow(1.5, c.cycleRound);
+    const rewardAmount = Math.round(BOSS_REWARD_AMOUNT * cycleMul);
+    for (let i = 0; i < rewardAmount; i++) {
+      this.absorbed[rewardType] += 1;
+      this.totalAbsorbed += 1;
+    }
+    this.peakCaptured = Math.max(this.peakCaptured, this.totalAbsorbed);
+    this.traits = recomputeTraits(this.absorbed);
+    this.centipede = null;
+    this.checkMilestones();
   }
 
   /**
@@ -1122,8 +1401,8 @@ export class World {
     const dx = (predator.x ?? 0) - (core.x ?? 0);
     const dy = (predator.y ?? 0) - (core.y ?? 0);
     if (Math.hypot(dx, dy) > this.traits.lockOnRange) return false;
-    if (predator.health == null) return false;
-    predator.health -= stingers;
+
+    // Push a tracer regardless of target type for the visual flash.
     this.tracers.push({
       x1: core.x ?? 0,
       y1: core.y ?? 0,
@@ -1134,6 +1413,25 @@ export class World {
     });
     this.lockOnReadyAt = nowMs + this.traits.lockOnCooldownMs;
     this.events.push("lockOn");
+
+    // Centipede-specific: head takes damage; segments sever the chain.
+    if (predator.bossKind === "centipede") {
+      const c = this.centipede;
+      if (!c) return true;
+      if (predator === c.head) {
+        if (c.head.health == null) return true;
+        c.head.health -= stingers;
+        if (c.head.health <= 0) this.killCentipede();
+      } else {
+        const segIdx = c.segments.indexOf(predator);
+        if (segIdx >= 0) this.severCentipedeAt(segIdx);
+      }
+      return true;
+    }
+
+    // Generic predator damage (legacy path; unused with centipede-only).
+    if (predator.health == null) return true;
+    predator.health -= stingers;
     if (predator.health <= 0) this.killPredator(predator);
     return true;
   }

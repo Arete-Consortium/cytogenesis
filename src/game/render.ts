@@ -863,15 +863,147 @@ export function drawBodies(
 /* ─── Predator (anglerfish) ──────────────────────────────────────── */
 
 export function drawPredators(ctx: CanvasRenderingContext2D, world: World): void {
+  // Centipede gets a unified render (head + chain) so the segments
+  // connect smoothly. All other predators (legacy) still draw
+  // individually if any are around.
+  if (world.centipede) drawCentipede(ctx, world);
   if (world.predators.length === 0) return;
   const t = world.tickN;
   for (const p of world.predators) {
+    if (p.bossKind === "centipede") continue; // already drawn above
     if (p.bossKind === "swarmLord") drawSwarmLord(ctx, p, t);
     else if (p.bossKind === "tideMaw") drawTideMaw(ctx, p, t);
     else if (p.bossKind === "abyssEye") drawAbyssEye(ctx, p, t);
     else if (p.variant === "brute") drawBrutePredator(ctx, p, t);
     else drawSkirmisherPredator(ctx, p, t);
   }
+}
+
+/**
+ * Centipede — long head + body chain. Draws the entire creature as a
+ * single unit so the chain is visually continuous.
+ */
+function drawCentipede(ctx: CanvasRenderingContext2D, world: World): void {
+  const c = world.centipede;
+  if (!c) return;
+  const T = currentTheme().predator;
+  const head = c.head;
+  const segs = c.segments;
+  const t = world.tickN;
+  const allBodies = [head, ...segs];
+
+  // Halo under the chain
+  for (const b of allBodies) {
+    const x = b.x ?? 0;
+    const y = b.y ?? 0;
+    const halo = ctx.createRadialGradient(x, y, b.radius * 0.4, x, y, b.radius * 2.4);
+    halo.addColorStop(0, T.halo0);
+    halo.addColorStop(1, T.halo1);
+    ctx.fillStyle = halo;
+    ctx.beginPath();
+    ctx.arc(x, y, b.radius * 2.4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Connective body — stroked smooth path through head + segment centers
+  if (segs.length > 0) {
+    ctx.beginPath();
+    ctx.moveTo(head.x ?? 0, head.y ?? 0);
+    for (let i = 0; i < allBodies.length - 1; i++) {
+      const a = allBodies[i];
+      const b = allBodies[i + 1];
+      const mx = ((a.x ?? 0) + (b.x ?? 0)) / 2;
+      const my = ((a.y ?? 0) + (b.y ?? 0)) / 2;
+      ctx.quadraticCurveTo(a.x ?? 0, a.y ?? 0, mx, my);
+    }
+    const last = allBodies[allBodies.length - 1];
+    ctx.lineTo(last.x ?? 0, last.y ?? 0);
+    ctx.strokeStyle = T.bodyDark;
+    ctx.lineWidth = head.radius * 1.4;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.stroke();
+  }
+
+  // Each segment: dark circle with chitin ring + faint inner highlight
+  for (let i = segs.length - 1; i >= 0; i--) {
+    const s = segs[i];
+    const x = s.x ?? 0;
+    const y = s.y ?? 0;
+    ctx.fillStyle = T.bodyDark;
+    ctx.beginPath();
+    ctx.arc(x, y, s.radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = T.rim;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    // Chitin segment ring
+    ctx.strokeStyle = T.lureLine;
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.arc(x, y, s.radius * 0.6, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // Head — distinct: larger, with eyes + teeth + segmented mandibles
+  const hx = head.x ?? 0;
+  const hy = head.y ?? 0;
+  const hr = head.radius;
+  const angle = Math.atan2(head.vy ?? 0, head.vx ?? 0) || 0;
+
+  ctx.save();
+  ctx.translate(hx, hy);
+  ctx.rotate(angle);
+
+  // Body
+  ctx.fillStyle = T.bodyDark;
+  ctx.beginPath();
+  ctx.ellipse(0, 0, hr, hr * 0.85, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = T.rim;
+  ctx.lineWidth = 1.8;
+  ctx.stroke();
+
+  // Mandibles — two curved spikes flaring forward
+  ctx.fillStyle = T.teeth;
+  for (const side of [-1, 1]) {
+    ctx.beginPath();
+    ctx.moveTo(hr * 0.6, hr * 0.35 * side);
+    ctx.quadraticCurveTo(hr * 1.1, hr * 0.55 * side, hr * 1.3, hr * 0.2 * side);
+    ctx.quadraticCurveTo(hr * 1.0, hr * 0.3 * side, hr * 0.7, hr * 0.2 * side);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // Front teeth row
+  ctx.fillStyle = T.teeth;
+  for (let i = -1; i <= 1; i++) {
+    const ty = i * hr * 0.18;
+    ctx.beginPath();
+    ctx.moveTo(hr * 0.55, ty);
+    ctx.lineTo(hr * 0.95, ty - hr * 0.07);
+    ctx.lineTo(hr * 0.95, ty + hr * 0.07);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // Two glowing eyes
+  ctx.fillStyle = T.eye;
+  for (const ey of [-hr * 0.35, hr * 0.35]) {
+    ctx.beginPath();
+    ctx.arc(hr * 0.15, ey, hr * 0.13, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // Pupils — pulse with time so the head reads as alive
+  ctx.fillStyle = "#000";
+  const pupil = 0.05 + 0.02 * Math.sin(t * 0.05);
+  for (const ey of [-hr * 0.35, hr * 0.35]) {
+    ctx.beginPath();
+    ctx.arc(hr * 0.18, ey, hr * pupil, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.restore();
 }
 
 /* ─── Bosses ─────────────────────────────────────────────────────── */

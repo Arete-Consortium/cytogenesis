@@ -22,7 +22,7 @@ export interface Vec2 {
  * body is part of the player's entity graph or a free-floating cell.
  */
 export type PredatorVariant = "skirmisher" | "brute";
-export type BossKind = "swarmLord" | "tideMaw" | "abyssEye";
+export type BossKind = "swarmLord" | "tideMaw" | "abyssEye" | "centipede";
 
 export interface Body extends SimulationNodeDatum {
   id: string;
@@ -39,6 +39,8 @@ export interface Body extends SimulationNodeDatum {
   health?: number;
   /** Predator-only: marks this body as a boss with a specific personality. */
   bossKind?: BossKind;
+  /** Centipede segment marker: index in chain (0 = head, 1+ = segments). */
+  segmentIndex?: number;
 }
 
 /** Camera transform — matches d3.zoomTransform shape (k, x, y). */
