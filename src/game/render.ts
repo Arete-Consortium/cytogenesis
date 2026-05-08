@@ -1087,17 +1087,107 @@ function drawCentipede(ctx: CanvasRenderingContext2D, world: World): void {
   // Body half-thickness — much slimmer than original to read as a ribbon.
   const bodyHalfWidth = hr * 0.48;
 
+  // Combat phase derived from world state — drives visual treatment.
+  const phase = c.attackPhase;
+  // Linear progress 0..1 within the current phase, for animations.
+  const phaseDur =
+    phase === "windup"
+      ? 520
+      : phase === "lunge"
+      ? 280
+      : phase === "recover"
+      ? 700
+      : 1;
+  const phaseProgress =
+    phase === "idle"
+      ? 0
+      : Math.max(0, Math.min(1, 1 - (c.attackPhaseUntilMs - world.wallMs) / phaseDur));
+  const isEnraged = c.enragedFlashed;
+
   // ── Soft warm halo under the whole creature ─────────────────────
+  // Enraged: halo shifts red/hot.
+  const haloFill = isEnraged ? "rgba(220, 60, 40, 0.35)" : P.haloFill;
+  const haloFade = isEnraged ? "rgba(220, 60, 40, 0)" : P.haloFade;
   for (const b of allBodies) {
     const x = b.x ?? 0;
     const y = b.y ?? 0;
     const halo = ctx.createRadialGradient(x, y, b.radius * 0.4, x, y, b.radius * 2.0);
-    halo.addColorStop(0, P.haloFill);
-    halo.addColorStop(1, P.haloFade);
+    halo.addColorStop(0, haloFill);
+    halo.addColorStop(1, haloFade);
     ctx.fillStyle = halo;
     ctx.beginPath();
     ctx.arc(x, y, b.radius * 2.0, 0, Math.PI * 2);
     ctx.fill();
+  }
+
+  // ── Windup telegraph — red dashed beam pointing at the player ───
+  // The beam grows brighter and longer as the windup progresses so
+  // the player can read the timing.
+  if (phase === "windup") {
+    const core = world.entityBodies[0];
+    const px = core?.x ?? 0;
+    const py = core?.y ?? 0;
+    const hx = head.x ?? 0;
+    const hy = head.y ?? 0;
+    const aimDx = px - hx;
+    const aimDy = py - hy;
+    const aimLen = Math.hypot(aimDx, aimDy) || 1;
+    const ux = aimDx / aimLen;
+    const uy = aimDy / aimLen;
+    // Beam grows from 30% → 110% of player distance through the windup.
+    const beamLen = aimLen * (0.3 + phaseProgress * 0.8);
+    const alpha = 0.35 + phaseProgress * 0.55;
+    ctx.save();
+    ctx.lineCap = "round";
+    // Thick outer halo line
+    ctx.strokeStyle = `rgba(255, 60, 50, ${(alpha * 0.45).toFixed(3)})`;
+    ctx.lineWidth = 12 * (0.6 + phaseProgress * 0.8);
+    ctx.beginPath();
+    ctx.moveTo(hx, hy);
+    ctx.lineTo(hx + ux * beamLen, hy + uy * beamLen);
+    ctx.stroke();
+    // Sharp inner dashed line
+    ctx.setLineDash([10, 6]);
+    ctx.lineDashOffset = -t * 1.4;
+    ctx.strokeStyle = `rgba(255, 220, 200, ${alpha.toFixed(3)})`;
+    ctx.lineWidth = 2.4;
+    ctx.beginPath();
+    ctx.moveTo(hx, hy);
+    ctx.lineTo(hx + ux * beamLen, hy + uy * beamLen);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    // Strike-point marker — bright pulsing crosshair where the lunge
+    // will land if the player doesn't move.
+    const mx = hx + ux * beamLen;
+    const my = hy + uy * beamLen;
+    const mr = 6 + 4 * Math.sin(t * 0.4);
+    ctx.strokeStyle = `rgba(255, 80, 60, ${alpha.toFixed(3)})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(mx, my, mr, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(mx - mr * 1.6, my);
+    ctx.lineTo(mx + mr * 1.6, my);
+    ctx.moveTo(mx, my - mr * 1.6);
+    ctx.lineTo(mx, my + mr * 1.6);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // ── Motion-blur trail during lunge — fading head silhouettes
+  if (phase === "lunge" && c.positionHistory.length >= 4) {
+    ctx.save();
+    for (let i = 1; i <= 5; i++) {
+      const p = c.positionHistory[Math.min(i * 2, c.positionHistory.length - 1)];
+      if (!p) continue;
+      const a = (1 - i / 6) * 0.5;
+      ctx.fillStyle = `rgba(216, 200, 150, ${a.toFixed(3)})`;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, hr * (1 - i * 0.1), 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
   }
 
   // ── Build sample points along the spine via Catmull-Rom smoothing
@@ -1361,9 +1451,24 @@ function drawCentipede(ctx: CanvasRenderingContext2D, world: World): void {
   const hy = head.y ?? 0;
   const angle = Math.atan2(head.vy ?? 0, head.vx ?? 0) || 0;
 
+  // Windup jitter — head trembles before the strike.
+  const jitterX = phase === "windup" ? Math.sin(t * 1.7) * 1.6 * phaseProgress : 0;
+  const jitterY = phase === "windup" ? Math.cos(t * 2.1) * 1.6 * phaseProgress : 0;
+
   ctx.save();
-  ctx.translate(hx, hy);
+  ctx.translate(hx + jitterX, hy + jitterY);
   ctx.rotate(angle);
+
+  // Enraged red glow under the head shell.
+  if (isEnraged) {
+    const glow = ctx.createRadialGradient(0, 0, hr * 0.3, 0, 0, hr * 1.4);
+    glow.addColorStop(0, "rgba(255, 70, 50, 0.55)");
+    glow.addColorStop(1, "rgba(255, 70, 50, 0)");
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(0, 0, hr * 1.4, 0, Math.PI * 2);
+    ctx.fill();
+  }
 
   // Antennae — long banded waving filaments forward
   const antLen = hr * 3.2;
@@ -1397,16 +1502,18 @@ function drawCentipede(ctx: CanvasRenderingContext2D, world: World): void {
     }
   }
 
-  // Head shell — pale tan teardrop
-  ctx.fillStyle = P.bodyPale;
+  // Head shell — pale tan, tinted reddish when enraged
+  const headFill = isEnraged ? "#d8907a" : P.bodyPale;
+  const headRim = isEnraged ? "#7a3220" : P.bodyShade;
+  ctx.fillStyle = headFill;
   ctx.beginPath();
   ctx.ellipse(hr * 0.1, 0, hr * 0.95, hr * 0.7, 0, 0, Math.PI * 2);
   ctx.fill();
-  ctx.strokeStyle = P.bodyShade;
-  ctx.lineWidth = 1.2;
+  ctx.strokeStyle = headRim;
+  ctx.lineWidth = 1.4;
   ctx.stroke();
   // Two head stripes (continuation of the body lines)
-  ctx.strokeStyle = P.stripeDark;
+  ctx.strokeStyle = isEnraged ? "#3a0808" : P.stripeDark;
   ctx.lineWidth = 1.2;
   for (const off of [-hr * 0.3, hr * 0.3]) {
     ctx.beginPath();
@@ -1415,16 +1522,28 @@ function drawCentipede(ctx: CanvasRenderingContext2D, world: World): void {
     ctx.stroke();
   }
 
-  // Mandibles — short forward-curving fangs (much smaller than before)
+  // Mandibles — flare wider during windup + lunge.
+  const flare = phase === "windup" ? phaseProgress * 0.5 : phase === "lunge" ? 0.65 : 0;
   for (const side of [-1, 1]) {
     const grd = ctx.createLinearGradient(hr * 0.7, 0, hr * 1.15, 0);
     grd.addColorStop(0, P.mandible);
     grd.addColorStop(1, P.mandibleTip);
     ctx.fillStyle = grd;
     ctx.beginPath();
-    ctx.moveTo(hr * 0.7, side * hr * 0.18);
-    ctx.quadraticCurveTo(hr * 1.0, side * hr * 0.32, hr * 1.15, side * hr * 0.08);
-    ctx.quadraticCurveTo(hr * 0.95, side * hr * 0.2, hr * 0.78, side * hr * 0.1);
+    const fy = (1 + flare) * side;
+    ctx.moveTo(hr * 0.7, hr * 0.18 * fy);
+    ctx.quadraticCurveTo(
+      hr * (1.0 + flare * 0.15),
+      hr * 0.32 * fy,
+      hr * (1.15 + flare * 0.2),
+      hr * 0.08 * fy,
+    );
+    ctx.quadraticCurveTo(
+      hr * 0.95,
+      hr * 0.2 * fy,
+      hr * 0.78,
+      hr * 0.1 * fy,
+    );
     ctx.closePath();
     ctx.fill();
   }

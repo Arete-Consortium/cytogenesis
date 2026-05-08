@@ -111,6 +111,7 @@ const FEAR_ACCEL = 0.55;
 export type WorldEvent =
   | "capture"
   | "hit"
+  | "lungeHit"
   | "transcend"
   | "death"
   | "lockOn"
@@ -119,6 +120,9 @@ export type WorldEvent =
   | "killPred"
   | "killBoss"
   | "bossSpawn"
+  | "bossEnrage"
+  | "bossWindup"
+  | "bossLunge"
   | `trait:${string}`
   | `biome:${number}`
   | `evolve:${number}`
@@ -217,6 +221,26 @@ const CENTIPEDE_RESPAWN_DELAY_MS = 3500;
 /** Initial spawn delay so player has a moment to orient at run start. */
 const CENTIPEDE_INITIAL_SPAWN_DELAY_MS = 2000;
 
+/** Lunge attack — telegraphed strike for the player to dodge. */
+const LUNGE_RANGE = 280;
+const LUNGE_RANGE_SQ = LUNGE_RANGE * LUNGE_RANGE;
+/** wallMs the centipede holds its windup pose before firing. */
+const LUNGE_WINDUP_MS = 520;
+/** wallMs the lunge motion lasts at boosted speed. */
+const LUNGE_DURATION_MS = 280;
+/** wallMs of recovery — head crawls slowly, telegraphs vulnerability. */
+const LUNGE_RECOVER_MS = 700;
+/** wallMs cooldown between lunges in the calm phase. */
+const LUNGE_COOLDOWN_MS = 2600;
+/** Cooldown shrinks under enrage so the boss attacks back-to-back. */
+const LUNGE_COOLDOWN_ENRAGED_MS = 1200;
+/** Speed multiplier on the head's normal speed during the strike. */
+const LUNGE_SPEED_MUL = 5.2;
+/** Speed multiplier during recovery — head almost stalls so player can punish. */
+const LUNGE_RECOVER_SPEED_MUL = 0.25;
+/** Damage multiplier on lunge contact — connecting hurts much more than a graze. */
+const LUNGE_DAMAGE_MUL = 2;
+
 /** Free-cell ecology tuning. */
 const ECOLOGY_INTERVAL_MS = 4000;
 const ECOLOGY_NEIGHBOR_RANGE = 250;
@@ -312,6 +336,17 @@ export class World {
     nextDamageTickN: number;
     /** tickN at spawn — used to force a brief intro chase toward the player so the boss visibly enters the viewport. */
     spawnedAtTickN: number;
+    /** Attack state machine — gates the lunge cycle. */
+    attackPhase: "idle" | "windup" | "lunge" | "recover";
+    /** wallMs at which the current attack phase ends. */
+    attackPhaseUntilMs: number;
+    /** wallMs at which the next lunge can begin (idle → windup). */
+    nextLungeAtMs: number;
+    /** Locked unit vector aimed at predicted player position when windup ended. */
+    lungeDx: number;
+    lungeDy: number;
+    /** True once head HP crosses the enrage threshold — used for the one-time transition flash. */
+    enragedFlashed: boolean;
   } | null;
   /** wallMs at which to spawn the next centipede; null = no spawn pending. */
   nextCentipedeAtMs: number | null;
@@ -907,6 +942,13 @@ export class World {
       positionHistory: history,
       nextDamageTickN: 0,
       spawnedAtTickN: this.tickN,
+      attackPhase: "idle",
+      attackPhaseUntilMs: 0,
+      // First lunge is gated by intro chase + a short windup grace.
+      nextLungeAtMs: this.wallMs + 2400,
+      lungeDx: fx,
+      lungeDy: fy,
+      enragedFlashed: false,
     };
     this.events.push("bossSpawn");
     this.addShake(15);
@@ -928,17 +970,67 @@ export class World {
     const cx = core?.x ?? 0;
     const cy = core?.y ?? 0;
 
-    // ── Target selection ─────────────────────────────────────────────
-    // Three modes:
-    //  - INTRO chase (first N ticks after spawn): beeline toward
-    //    player so the centipede visibly enters the viewport.
-    //  - ENRAGED: low health or full chain → hunt player.
-    //  - WANDER: chase nearest free cell.
-    const introChase =
-      this.tickN - c.spawnedAtTickN < CENTIPEDE_INTRO_CHASE_TICKS;
+    // ── Enrage transition (one-shot flash + shake) ───────────────────
     const enraged =
       (head.health ?? 0) < BOSS_HEALTH.centipede * CENTIPEDE_AGGRO_HEALTH_FRAC ||
       c.segments.length >= CENTIPEDE_MAX_SEGMENTS;
+    if (enraged && !c.enragedFlashed) {
+      c.enragedFlashed = true;
+      this.events.push("bossEnrage");
+      this.addShake(18);
+      this.emitSparkle(head.x ?? 0, head.y ?? 0, "rgba(248, 113, 113,");
+    }
+
+    // ── Attack state machine ────────────────────────────────────────
+    // Drives whether this tick is a normal pursuit, a windup hold,
+    // a fast strike, or a slow recovery.
+    const introChase =
+      this.tickN - c.spawnedAtTickN < CENTIPEDE_INTRO_CHASE_TICKS;
+    const distSq =
+      (cx - (head.x ?? 0)) ** 2 + (cy - (head.y ?? 0)) ** 2;
+
+    // Phase advancement on timer expiry.
+    if (
+      c.attackPhase !== "idle" &&
+      this.wallMs >= c.attackPhaseUntilMs
+    ) {
+      if (c.attackPhase === "windup") {
+        // Windup ends → strike. Lock the lunge vector aimed at where
+        // the player is RIGHT NOW (not predicted) — gives the player
+        // the standard fighting-game sidestep window.
+        const ldx = cx - (head.x ?? 0);
+        const ldy = cy - (head.y ?? 0);
+        const ll = Math.hypot(ldx, ldy) || 1;
+        c.lungeDx = ldx / ll;
+        c.lungeDy = ldy / ll;
+        c.attackPhase = "lunge";
+        c.attackPhaseUntilMs = this.wallMs + LUNGE_DURATION_MS;
+        this.events.push("bossLunge");
+        this.addShake(8);
+      } else if (c.attackPhase === "lunge") {
+        c.attackPhase = "recover";
+        c.attackPhaseUntilMs = this.wallMs + LUNGE_RECOVER_MS;
+      } else if (c.attackPhase === "recover") {
+        c.attackPhase = "idle";
+        const cooldown = enraged ? LUNGE_COOLDOWN_ENRAGED_MS : LUNGE_COOLDOWN_MS;
+        c.nextLungeAtMs = this.wallMs + cooldown;
+      }
+    }
+
+    // Idle → windup if in range and off cooldown. Skip while intro is
+    // still playing so the entry scene reads cleanly.
+    if (
+      c.attackPhase === "idle" &&
+      !introChase &&
+      this.wallMs >= c.nextLungeAtMs &&
+      distSq <= LUNGE_RANGE_SQ
+    ) {
+      c.attackPhase = "windup";
+      c.attackPhaseUntilMs = this.wallMs + LUNGE_WINDUP_MS;
+      this.events.push("bossWindup");
+    }
+
+    // ── Target selection (only used by idle/windup/recover phases) ───
     let tx: number;
     let ty: number;
     if (introChase || enraged) {
@@ -963,13 +1055,34 @@ export class World {
       ty = (head.y ?? 0) + bestDy;
     }
 
-    // ── Move head toward target ──────────────────────────────────────
-    const dx = tx - (head.x ?? 0);
-    const dy = ty - (head.y ?? 0);
-    const len = Math.hypot(dx, dy) || 1;
-    const speed = CENTIPEDE_HEAD_SPEED * (1 + c.cycleRound * 0.1) * (1 + (c.level - 1) * 0.1);
-    head.vx = (dx / len) * speed;
-    head.vy = (dy / len) * speed;
+    // ── Move head — speed depends on attack phase ───────────────────
+    const baseSpeed =
+      CENTIPEDE_HEAD_SPEED * (1 + c.cycleRound * 0.1) * (1 + (c.level - 1) * 0.1);
+    if (c.attackPhase === "lunge") {
+      // Locked direction, boosted speed. Mandibles fly forward.
+      const lungeSpeed = baseSpeed * LUNGE_SPEED_MUL;
+      head.vx = c.lungeDx * lungeSpeed;
+      head.vy = c.lungeDy * lungeSpeed;
+    } else if (c.attackPhase === "windup") {
+      // Coiled — head almost stops, with a tiny back-step away from the
+      // player so the rear-back is visible. Aim still points at player.
+      const ldx = cx - (head.x ?? 0);
+      const ldy = cy - (head.y ?? 0);
+      const ll = Math.hypot(ldx, ldy) || 1;
+      head.vx = -(ldx / ll) * baseSpeed * 0.25;
+      head.vy = -(ldy / ll) * baseSpeed * 0.25;
+    } else {
+      // Idle or recover: pursue target at base or recovery speed.
+      const dx = tx - (head.x ?? 0);
+      const dy = ty - (head.y ?? 0);
+      const len = Math.hypot(dx, dy) || 1;
+      const speed =
+        c.attackPhase === "recover"
+          ? baseSpeed * LUNGE_RECOVER_SPEED_MUL
+          : baseSpeed;
+      head.vx = (dx / len) * speed;
+      head.vy = (dy / len) * speed;
+    }
     head.x = (head.x ?? 0) + head.vx * scale;
     head.y = (head.y ?? 0) + head.vy * scale;
     // Wrap.
@@ -1016,15 +1129,29 @@ export class World {
       const cdy = cy - (head.y ?? 0);
       const cr = head.radius + (core?.radius ?? 18);
       if (cdx * cdx + cdy * cdy <= cr * cr) {
-        this.damageAbsorbed(CENTIPEDE_PLAYER_DAMAGE);
-        this.addShake(12);
-        this.events.push("hit");
+        // Lunge connections hurt much more — that's the punishment for
+        // failing to dodge. Recovery contact also hurts (the player
+        // shouldn't be able to ram the head harmlessly).
+        const isLungeHit = c.attackPhase === "lunge";
+        const dmgMul = isLungeHit ? LUNGE_DAMAGE_MUL : 1;
+        this.damageAbsorbed(CENTIPEDE_PLAYER_DAMAGE * dmgMul);
+        this.addShake(isLungeHit ? 22 : 12);
+        this.events.push(isLungeHit ? "lungeHit" : "hit");
         this.emitSparkle(cx, cy, "rgba(248, 113, 113,");
         c.nextDamageTickN = this.tickN + CENTIPEDE_PLAYER_DAMAGE_COOLDOWN_TICKS;
-        // Toxic-bell counter: stinger absorbs damage the head.
+        // A lunge that connects ends in immediate recovery — no
+        // double-tap into the player.
+        if (isLungeHit) {
+          c.attackPhase = "recover";
+          c.attackPhaseUntilMs = this.wallMs + LUNGE_RECOVER_MS;
+        }
+        // Toxic-bell counter: stinger absorbs damage the head. Bonus
+        // damage during recovery — punish window for the player.
         const stingers = this.absorbed.stinger ?? 0;
         if (stingers > 0 && head.health != null) {
-          head.health -= stingers;
+          const stingerDmg =
+            c.attackPhase === "recover" ? stingers * 2 : stingers;
+          head.health -= stingerDmg;
           if (head.health <= 0) {
             this.killCentipede();
             return;
@@ -1482,7 +1609,9 @@ export class World {
       if (!c) return true;
       if (predator === c.head) {
         if (c.head.health == null) return true;
-        c.head.health -= stingers;
+        // Recovery is the punish window — ranged hits do double during it.
+        const dmg = c.attackPhase === "recover" ? stingers * 2 : stingers;
+        c.head.health -= dmg;
         if (c.head.health <= 0) this.killCentipede();
       } else {
         const segIdx = c.segments.indexOf(predator);
