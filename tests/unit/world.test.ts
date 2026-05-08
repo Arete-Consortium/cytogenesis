@@ -12,11 +12,11 @@ describe("World", () => {
     expect(cores[0].kind).toBe("captured");
   });
 
-  it("default freeCount scatters ~200 free cells", () => {
+  it("default freeCount scatters ~150 free cells", () => {
     const w = new World();
     const counts = w.countByKind();
     expect(counts.captured).toBe(1);
-    expect(counts.free).toBe(200);
+    expect(counts.free).toBe(150);
   });
 
   it("camera transform round-trips screen ⇄ world", () => {

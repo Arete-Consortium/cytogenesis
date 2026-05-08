@@ -194,9 +194,11 @@ const BOSS_REWARD_TYPE: Record<BossKind, NodeTypeId> = {
 const BOSS_REWARD_AMOUNT = 5;
 
 /** Centipede tuning. */
-const CENTIPEDE_HEAD_SPEED = 0.55;
+const CENTIPEDE_HEAD_SPEED = 1.1;
 const CENTIPEDE_AGGRO_HEALTH_FRAC = 0.4;
 const CENTIPEDE_INITIAL_SEGMENTS = 3;
+/** First N ticks after spawn the centipede beelines toward the player so it visibly enters the viewport. */
+const CENTIPEDE_INTRO_CHASE_TICKS = 240;
 const CENTIPEDE_MAX_SEGMENTS = 14;
 const CENTIPEDE_SEGMENT_SPACING_TICKS = 6;
 const CENTIPEDE_HISTORY_MAX =
@@ -224,7 +226,7 @@ const ECOLOGY_DECAY_PROB = 0.05;
 const ECOLOGY_REPRO_CAP_PER_TICK = 8;
 const ECOLOGY_DECAY_CAP_PER_TICK = 6;
 const FREE_POP_MIN = 50;
-const FREE_POP_MAX = 400;
+const FREE_POP_MAX = 250;
 
 /** Stage at which the given totalAbsorbed currently sits. */
 export function computeStage(totalAbsorbed: number): number {
@@ -308,6 +310,8 @@ export class World {
     positionHistory: { x: number; y: number }[];
     /** tickN at which centipede can damage the player again. */
     nextDamageTickN: number;
+    /** tickN at spawn — used to force a brief intro chase toward the player so the boss visibly enters the viewport. */
+    spawnedAtTickN: number;
   } | null;
   /** wallMs at which to spawn the next centipede; null = no spawn pending. */
   nextCentipedeAtMs: number | null;
@@ -347,8 +351,10 @@ export class World {
   private linkForce: d3.ForceLink<Body, Bond>;
 
   constructor(config: WorldConfig = {}) {
-    const freeCount = config.freeCount ?? 200;
-    this.arenaHalf = config.arenaHalf ?? 1500;
+    const freeCount = config.freeCount ?? 150;
+    // Smaller arena — tighter hunting ground, the centipede is harder
+    // to lose, free cells stay denser. 2000×2000 world.
+    this.arenaHalf = config.arenaHalf ?? 1000;
     this.rng = rngFromSeed(config.seed ?? "cytogenesis");
 
     // Env CA must exist before spawnFree can bias toward live zones.
@@ -825,9 +831,10 @@ export class World {
     const cx = core?.x ?? 0;
     const cy = core?.y ?? 0;
     const angle = this.rng.next() * Math.PI * 2;
-    // Spawn just off-screen — close enough that the player sees it
-    // approach almost immediately, far enough to not be on top of them.
-    const spawnDist = 450;
+    // Spawn just inside the viewport edge — at default zoom 0.85 a
+    // phone viewport is ~470wu wide, so 220 puts the centipede on
+    // screen the moment it appears.
+    const spawnDist = 220;
     const a = this.arenaHalf;
     const hx = Math.max(-a, Math.min(a, cx + Math.cos(angle) * spawnDist));
     const hy = Math.max(-a, Math.min(a, cy + Math.sin(angle) * spawnDist));
@@ -837,6 +844,13 @@ export class World {
     const headRadius =
       BOSS_RADIUS.centipede * (1 + cycle * 0.05) * (1 + (level - 1) * 0.08);
     const health = Math.round(BOSS_HEALTH.centipede * cycleMul * levelMul);
+    // Inbound facing — head points toward player so the chain trails
+    // back away from the player on spawn (visually obvious from frame 0).
+    const facingX = cx - hx;
+    const facingY = cy - hy;
+    const facingLen = Math.hypot(facingX, facingY) || 1;
+    const fx = facingX / facingLen;
+    const fy = facingY / facingLen;
     const head: Body = {
       id: newId("centipede-head"),
       type: "spore",
@@ -844,8 +858,8 @@ export class World {
       radius: headRadius,
       x: hx,
       y: hy,
-      vx: 0,
-      vy: 0,
+      vx: fx * CENTIPEDE_HEAD_SPEED,
+      vy: fy * CENTIPEDE_HEAD_SPEED,
       variant: "brute",
       health,
       bossKind: "centipede",
@@ -853,15 +867,19 @@ export class World {
     };
     this.predators.push(head);
 
+    // Pre-spread segments behind the head along -facing so the
+    // centipede has visible body length the instant it appears.
+    const segGap = headRadius * 1.6;
     const segments: Body[] = [];
     for (let i = 0; i < CENTIPEDE_INITIAL_SEGMENTS; i++) {
+      const offset = segGap * (i + 1);
       const seg: Body = {
         id: newId("centipede-seg"),
         type: "spore",
         kind: "predator",
         radius: headRadius * 0.7,
-        x: hx,
-        y: hy,
+        x: hx - fx * offset,
+        y: hy - fy * offset,
         vx: 0,
         vy: 0,
         bossKind: "centipede",
@@ -871,13 +889,24 @@ export class World {
       this.predators.push(seg);
     }
 
+    // Seed position history with the inbound trail so segments resolve
+    // to their pre-spread positions on the first tick rather than
+    // snapping back onto the head.
+    const history: { x: number; y: number }[] = [];
+    const totalHistory = CENTIPEDE_HISTORY_MAX;
+    const stepSize = segGap / CENTIPEDE_SEGMENT_SPACING_TICKS;
+    for (let i = 0; i < totalHistory; i++) {
+      history.push({ x: hx - fx * stepSize * i, y: hy - fy * stepSize * i });
+    }
+
     this.centipede = {
       level,
       cycleRound: cycle,
       head,
       segments,
-      positionHistory: [{ x: hx, y: hy }],
+      positionHistory: history,
       nextDamageTickN: 0,
+      spawnedAtTickN: this.tickN,
     };
     this.events.push("bossSpawn");
     this.addShake(15);
@@ -900,13 +929,19 @@ export class World {
     const cy = core?.y ?? 0;
 
     // ── Target selection ─────────────────────────────────────────────
-    // Switch to player-chase when health drops or chain is full.
+    // Three modes:
+    //  - INTRO chase (first N ticks after spawn): beeline toward
+    //    player so the centipede visibly enters the viewport.
+    //  - ENRAGED: low health or full chain → hunt player.
+    //  - WANDER: chase nearest free cell.
+    const introChase =
+      this.tickN - c.spawnedAtTickN < CENTIPEDE_INTRO_CHASE_TICKS;
     const enraged =
       (head.health ?? 0) < BOSS_HEALTH.centipede * CENTIPEDE_AGGRO_HEALTH_FRAC ||
       c.segments.length >= CENTIPEDE_MAX_SEGMENTS;
     let tx: number;
     let ty: number;
-    if (enraged) {
+    if (introChase || enraged) {
       tx = cx;
       ty = cy;
     } else {
