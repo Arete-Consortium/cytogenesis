@@ -390,15 +390,9 @@ export default function GameCanvas() {
       clearStickInput();
       if (wasStick) return; // stick gestures don't fire taps
       if (moved > TAP_THRESHOLD) return;
-      // Editor open — canvas taps are inert; the part-pick UI auto-places.
-      if (world.editor.open) return;
-      if (world.traits.lockOnRange <= 0) return;
-      const w = world.screenToWorld(sx, sy);
-      const hit = world.hitTest(w.x, w.y);
-      if (!hit) return;
-      const now = performance.now();
-      if (hit.kind === "predator") world.fireStinger(hit, now);
-      // Free cells: tap is inert. Capture is contact-only.
+      // Canvas taps are inert. Stinger fire moved to the on-screen
+      // Attack button so taps don't compete with swim input. Free cells
+      // are capture-on-contact.
     };
     const onPointerCancel = (e: PointerEvent) => {
       activePointers.delete(e.pointerId);
@@ -422,13 +416,7 @@ export default function GameCanvas() {
       const w = world.screenToWorld(sx, sy);
       const hit = world.hitTest(w.x, w.y);
       hoveredId = hit?.id ?? null;
-      if (hit && hit.kind === "predator" && world.traits.lockOnRange > 0) {
-        canvas.style.cursor = "crosshair";
-      } else if (pointerDownAt) {
-        canvas.style.cursor = "grabbing";
-      } else {
-        canvas.style.cursor = "default";
-      }
+      canvas.style.cursor = pointerDownAt ? "grabbing" : "default";
     };
     canvas.addEventListener("pointermove", onHoverCursor);
 
@@ -870,10 +858,46 @@ export default function GameCanvas() {
           <div className="animate-tutorial-pulse rounded-2xl border border-cyan-300/40 bg-black/40 px-6 py-4 text-center font-mono text-xs uppercase tracking-[0.2em] text-cyan-200 backdrop-blur-sm">
             <div>drag anywhere to swim</div>
             <div className="mt-1 text-[10px] tracking-[0.15em] text-zinc-400 normal-case">
-              tap prey when sensors lock on
+              attack button appears once stingers lock on
             </div>
           </div>
         </div>
+      )}
+
+      {/* Attack button — bottom-right, mirror of the thumbstick. Only
+          visible once lock_on trait is active (sensor + stinger absorbed).
+          Dims during cooldown. Pointer events only — no click events so
+          touch+drag from the swim stick can't accidentally trigger it. */}
+      {stats.traits.lockOnRange > 0 && stats.runStatus === "running" && (
+        <button
+          type="button"
+          aria-label="Attack — fire stinger at nearest predator"
+          disabled={!stats.lockOnReady}
+          onPointerDown={(e) => {
+            e.stopPropagation();
+            const w = worldRef.current;
+            if (!w) return;
+            w.fireNearestStinger(performance.now());
+          }}
+          className={`absolute z-30 inline-flex h-16 w-16 items-center justify-center rounded-full font-mono text-[10px] uppercase tracking-[0.2em] backdrop-blur transition-colors active:scale-95 ${
+            stats.lockOnReady
+              ? "bg-amber-300/15 text-amber-100 ring-2 ring-amber-300/55 hover:bg-amber-300/25 active:bg-amber-300/35"
+              : "bg-black/45 text-zinc-500 ring-1 ring-zinc-700"
+          }`}
+          style={{
+            bottom: "max(1rem, env(safe-area-inset-bottom))",
+            right: "max(1rem, env(safe-area-inset-right))",
+          }}
+        >
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="9" />
+            <line x1="12" y1="2" x2="12" y2="6" />
+            <line x1="12" y1="18" x2="12" y2="22" />
+            <line x1="2" y1="12" x2="6" y2="12" />
+            <line x1="18" y1="12" x2="22" y2="12" />
+            <circle cx="12" cy="12" r="2" fill="currentColor" />
+          </svg>
+        </button>
       )}
 
       {/* Trait-unlock toasts — fade in/out, centered. */}

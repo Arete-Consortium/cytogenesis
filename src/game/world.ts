@@ -37,6 +37,23 @@ const JITTER = 0.05;
 const TRANSCEND_AT = 80;
 /** Difficulty cycle length — every CYCLE_LEN absorbed bumps challenge. */
 const CYCLE_LEN = 80;
+/**
+ * Cycle-based scalar with a knee. Pre-knee growth is exponential at
+ * `fast` per cycle so early progression feels meaningful; past the knee
+ * it slows to `slow` per cycle so endless runs stay solvable. Without
+ * this cap, plain Math.pow(1.4, cycle) produced 38B-HP bosses by
+ * cycle 62.
+ */
+const CYCLE_KNEE = 10;
+function cycleScalar(cycle: number, fast: number, slow: number): number {
+  const k = Math.min(cycle, CYCLE_KNEE);
+  const tail = Math.max(0, cycle - CYCLE_KNEE);
+  return Math.pow(fast, k) * Math.pow(slow, tail);
+}
+/** Soft-capped radius mul — cycle bonus plateaus so bosses don't fill the screen. */
+function cycleRadiusMul(cycle: number): number {
+  return 1 + Math.min(cycle, 8) * 0.05;
+}
 /** Evolution-stage thresholds — index = stage, value = totalAbsorbed required. */
 export const STAGE_THRESHOLDS = [0, 6, 16, 32, 56, 80];
 export const MAX_STAGE = STAGE_THRESHOLDS.length - 1;
@@ -1063,7 +1080,7 @@ export class World {
       this.events.push("killBoss");
       this.bossesDefeated += 1;
       const reward = BOSS_REWARD_TYPE[p.bossKind];
-      const cycleMul = Math.pow(1.5, this.cycleRound());
+      const cycleMul = cycleScalar(this.cycleRound(), 1.5, 1.08);
       const rewardAmount = Math.round(BOSS_REWARD_AMOUNT * cycleMul);
       for (let i = 0; i < rewardAmount; i++) {
         this.absorbed[reward] += 1;
@@ -1103,9 +1120,9 @@ export class World {
     const qx = Math.max(-a, Math.min(a, cx + Math.cos(angle) * spawnDist));
     const qy = Math.max(-a, Math.min(a, cy + Math.sin(angle) * spawnDist));
     const cycle = this.cycleRound();
-    const cycleMul = Math.pow(1.4, cycle);
+    const cycleMul = cycleScalar(cycle, 1.4, 1.05);
     const levelMul = 1 + (level - 1) * 0.4;
-    const bodyRadius = BOSS_RADIUS.swarmLord * (1 + cycle * 0.05) * (1 + (level - 1) * 0.08);
+    const bodyRadius = BOSS_RADIUS.swarmLord * cycleRadiusMul(cycle) * (1 + (level - 1) * 0.08);
     const health = Math.round(BOSS_HEALTH.swarmLord * cycleMul * levelMul);
     const body: Body = {
       id: newId("hive-queen"),
@@ -1202,7 +1219,7 @@ export class World {
       placed++;
     }
     const cycle = this.cycleRound();
-    const cycleMul = Math.pow(1.4, cycle);
+    const cycleMul = cycleScalar(cycle, 1.4, 1.05);
     const levelMul = 1 + (level - 1) * 0.3;
     const bodyRadius = BOSS_RADIUS.tideMaw + targetMass * 0.5;
     const health = Math.round(
@@ -1246,9 +1263,9 @@ export class World {
     const px = Math.max(-a, Math.min(a, cx + Math.cos(angle) * spawnDist));
     const py = Math.max(-a, Math.min(a, cy + Math.sin(angle) * spawnDist));
     const cycle = this.cycleRound();
-    const cycleMul = Math.pow(1.4, cycle);
+    const cycleMul = cycleScalar(cycle, 1.4, 1.05);
     const levelMul = 1 + (level - 1) * 0.4;
-    const radius = BOSS_RADIUS.phage * (1 + cycle * 0.05) * (1 + (level - 1) * 0.08);
+    const radius = BOSS_RADIUS.phage * cycleRadiusMul(cycle) * (1 + (level - 1) * 0.08);
     const health = Math.round(BOSS_HEALTH.phage * cycleMul * levelMul);
     const body: Body = {
       id: newId("phage"),
@@ -1289,9 +1306,9 @@ export class World {
     const cxs = Math.max(-a, Math.min(a, cx + Math.cos(angle) * spawnDist));
     const cys = Math.max(-a, Math.min(a, cy + Math.sin(angle) * spawnDist));
     const cycle = this.cycleRound();
-    const cycleMul = Math.pow(1.4, cycle);
+    const cycleMul = cycleScalar(cycle, 1.4, 1.05);
     const levelMul = 1 + (level - 1) * 0.4;
-    const radius = BOSS_RADIUS.ciliate * (1 + cycle * 0.05) * (1 + (level - 1) * 0.08);
+    const radius = BOSS_RADIUS.ciliate * cycleRadiusMul(cycle) * (1 + (level - 1) * 0.08);
     const health = Math.round(BOSS_HEALTH.ciliate * cycleMul * levelMul);
     const body: Body = {
       id: newId("ciliate"),
@@ -1333,10 +1350,10 @@ export class World {
     const hx = Math.max(-a, Math.min(a, cx + Math.cos(angle) * spawnDist));
     const hy = Math.max(-a, Math.min(a, cy + Math.sin(angle) * spawnDist));
     const cycle = this.cycleRound();
-    const cycleMul = Math.pow(1.4, cycle);
+    const cycleMul = cycleScalar(cycle, 1.4, 1.05);
     const levelMul = 1 + (level - 1) * 0.4;
     const headRadius =
-      BOSS_RADIUS.centipede * (1 + cycle * 0.05) * (1 + (level - 1) * 0.08);
+      BOSS_RADIUS.centipede * cycleRadiusMul(cycle) * (1 + (level - 1) * 0.08);
     const health = Math.round(BOSS_HEALTH.centipede * cycleMul * levelMul);
     // Inbound facing — head points toward player so the chain trails
     // back away from the player on spawn (visually obvious from frame 0).
@@ -1516,8 +1533,11 @@ export class World {
     }
 
     // ── Move head — speed depends on attack phase ───────────────────
+    // Cap cycle speed bonus at +50% (cycle 5+). Without this, lunge
+    // displacement at cycle 60+ outran the segment-spacing buffer and
+    // stretched the chain across the entire viewport.
     const baseSpeed =
-      CENTIPEDE_HEAD_SPEED * (1 + c.cycleRound * 0.1) * (1 + (c.level - 1) * 0.1);
+      CENTIPEDE_HEAD_SPEED * (1 + Math.min(c.cycleRound, 5) * 0.1) * (1 + (c.level - 1) * 0.1);
     if (c.attackPhase === "lunge") {
       // Locked direction, boosted speed. Mandibles fly forward.
       const lungeSpeed = baseSpeed * LUNGE_SPEED_MUL;
@@ -1690,7 +1710,7 @@ export class World {
     this.events.push("killBoss");
     this.bossesDefeated += 1;
     const rewardType = CENTIPEDE_LEVEL_REWARD[c.level] ?? "membrane";
-    const cycleMul = Math.pow(1.5, c.cycleRound);
+    const cycleMul = cycleScalar(c.cycleRound, 1.5, 1.08);
     const rewardAmount = Math.round(BOSS_REWARD_AMOUNT * cycleMul);
     for (let i = 0; i < rewardAmount; i++) {
       this.absorbed[rewardType] += 1;
@@ -1867,7 +1887,7 @@ export class World {
     this.addShake(20);
     this.events.push("killBoss");
     this.bossesDefeated += 1;
-    const cycleMul = Math.pow(1.5, h.cycleRound);
+    const cycleMul = cycleScalar(h.cycleRound, 1.5, 1.08);
     const rewardAmount = Math.round(BOSS_REWARD_AMOUNT * cycleMul);
     for (let i = 0; i < rewardAmount; i++) {
       this.absorbed.spore += 1;
@@ -1889,7 +1909,7 @@ export class World {
     this.addShake(20);
     this.events.push("killBoss");
     this.bossesDefeated += 1;
-    const cycleMul = Math.pow(1.5, m.cycleRound);
+    const cycleMul = cycleScalar(m.cycleRound, 1.5, 1.08);
     const rewardAmount = Math.round(BOSS_REWARD_AMOUNT * cycleMul);
     for (let i = 0; i < rewardAmount; i++) {
       this.absorbed.stinger += 1;
@@ -2078,7 +2098,7 @@ export class World {
     this.addShake(20);
     this.events.push("killBoss");
     this.bossesDefeated += 1;
-    const cycleMul = Math.pow(1.5, p.cycleRound);
+    const cycleMul = cycleScalar(p.cycleRound, 1.5, 1.08);
     const rewardAmount = Math.round(BOSS_REWARD_AMOUNT * cycleMul);
     for (let i = 0; i < rewardAmount; i++) {
       this.absorbed.mitochondrion += 1;
@@ -2099,7 +2119,7 @@ export class World {
     this.addShake(20);
     this.events.push("killBoss");
     this.bossesDefeated += 1;
-    const cycleMul = Math.pow(1.5, c.cycleRound);
+    const cycleMul = cycleScalar(c.cycleRound, 1.5, 1.08);
     const rewardAmount = Math.round(BOSS_REWARD_AMOUNT * cycleMul);
     for (let i = 0; i < rewardAmount; i++) {
       this.absorbed.chloroplast += 1;
@@ -2541,6 +2561,33 @@ export class World {
       b.vx = vx;
       b.vy = vy;
     }
+  }
+
+  /**
+   * Player input: fire a stinger at the nearest in-range predator.
+   * Used by the on-screen attack button — keeps swim input free of
+   * tap-to-shoot interruptions. Returns true on hit.
+   */
+  fireNearestStinger(nowMs: number): boolean {
+    if (this.traits.lockOnRange <= 0) return false;
+    if (nowMs < this.lockOnReadyAt) return false;
+    if (this.entityBodies.length === 0) return false;
+    const core = this.entityBodies[0];
+    const cx = core.x ?? 0;
+    const cy = core.y ?? 0;
+    let nearest: Body | null = null;
+    let nearestDistSq = this.traits.lockOnRange * this.traits.lockOnRange;
+    for (const p of this.predators) {
+      const dx = (p.x ?? 0) - cx;
+      const dy = (p.y ?? 0) - cy;
+      const d2 = dx * dx + dy * dy;
+      if (d2 < nearestDistSq) {
+        nearest = p;
+        nearestDistSq = d2;
+      }
+    }
+    if (!nearest) return false;
+    return this.fireStinger(nearest, nowMs);
   }
 
   /**

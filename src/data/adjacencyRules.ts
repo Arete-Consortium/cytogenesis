@@ -35,7 +35,8 @@ export const TRAIT_DEFS: TraitDef[] = [
   {
     id: "lock_on",
     name: "Lock-On",
-    description: "Tap distant prey or predators to engage. Requires both sensor and stinger.",
+    description:
+      "Press the Attack button to fire a stinger at the nearest predator in range. Requires both sensor and stinger.",
     evaluate: ({ absorbed }) =>
       Math.min(absorbed.sensor ?? 0, absorbed.stinger ?? 0),
   },
