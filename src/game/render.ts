@@ -1190,48 +1190,87 @@ function drawPhage(ctx: CanvasRenderingContext2D, world: World): void {
     ctx.fill();
   }
 
+  // Charge buildup — bright glow at the baseplate before firing.
+  const sinceFire = world.wallMs - p.lastFiredMs;
+  const tilFire = Math.max(0, p.nextFireAtMs - world.wallMs);
+  const chargeProgress = tilFire < 600 ? Math.min(1, 1 - tilFire / 600) : 0;
+  // Contraction progress — sheath compresses for ~220ms after firing.
+  const CONTRACT_MS = 220;
+  const contractProgress = sinceFire < CONTRACT_MS ? sinceFire / CONTRACT_MS : 1;
+  // Sheath length: shrinks to 55% during contraction, then springs back
+  // through 110% before settling. Modeled as a quick easing curve.
+  let sheathScale = 1;
+  if (contractProgress < 0.4) {
+    // Compress
+    sheathScale = 1 - 0.45 * (contractProgress / 0.4);
+  } else if (contractProgress < 1) {
+    // Spring back, slight overshoot
+    const t1 = (contractProgress - 0.4) / 0.6;
+    sheathScale = 0.55 + 0.55 * t1 - 0.10 * Math.sin(t1 * Math.PI);
+  }
+  const sheathLen = r * 0.9 * sheathScale;
+
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(angle);
 
-  // Tail fibers — 6 thin legs splayed forward (toward player) from
-  // the baseplate. Each is a thin angled line.
+  // Tail fibers — 6 thin legs splayed forward from the baseplate.
+  // Baseplate moves with the contracting sheath.
+  const baseplateX = sheathLen + r * 0.06;
   ctx.strokeStyle = "rgba(60, 90, 80, 0.85)";
   ctx.lineWidth = 1.4;
   ctx.lineCap = "round";
   for (let i = 0; i < 6; i++) {
     const fa = (i / 5 - 0.5) * 1.4;
-    const baseX = r * 0.9;
-    const baseY = 0;
+    const baseX = baseplateX;
     const tipX = baseX + Math.cos(fa) * r * 1.1;
     const tipY = Math.sin(fa) * r * 1.4;
     ctx.beginPath();
-    ctx.moveTo(baseX, baseY);
+    ctx.moveTo(baseX, 0);
     ctx.lineTo(tipX, tipY);
     ctx.stroke();
   }
 
-  // Tail (contractile sheath) — rectangle pointing forward.
+  // Tail (contractile sheath) — body rectangle. Width swells during
+  // contraction (volume conservation read).
+  const sheathW = r * 0.36 * (1 + (1 - sheathScale) * 0.4);
   ctx.fillStyle = "rgba(45, 70, 60, 0.95)";
-  ctx.fillRect(0, -r * 0.18, r * 0.9, r * 0.36);
-  // Tail rings (ridges)
+  ctx.fillRect(0, -sheathW / 2, sheathLen, sheathW);
+  // Tail rings (ridges) — denser when compressed
   ctx.strokeStyle = "rgba(20, 35, 30, 0.9)";
   ctx.lineWidth = 1;
-  for (let i = 1; i < 5; i++) {
-    const rx = (r * 0.9) * (i / 5);
+  const ringCount = 5;
+  for (let i = 1; i < ringCount; i++) {
+    const rx = sheathLen * (i / ringCount);
     ctx.beginPath();
-    ctx.moveTo(rx, -r * 0.18);
-    ctx.lineTo(rx, r * 0.18);
+    ctx.moveTo(rx, -sheathW / 2);
+    ctx.lineTo(rx, sheathW / 2);
     ctx.stroke();
   }
   // Baseplate — hex prism cap at the tail's tip
   ctx.fillStyle = "rgba(80, 130, 110, 0.95)";
-  ctx.fillRect(r * 0.85, -r * 0.26, r * 0.12, r * 0.52);
+  ctx.fillRect(sheathLen, -r * 0.26, r * 0.12, r * 0.52);
   ctx.strokeStyle = "rgba(20, 35, 30, 0.9)";
-  ctx.strokeRect(r * 0.85, -r * 0.26, r * 0.12, r * 0.52);
+  ctx.strokeRect(sheathLen, -r * 0.26, r * 0.12, r * 0.52);
+  // Charge glow at baseplate before firing.
+  if (chargeProgress > 0) {
+    const cg = ctx.createRadialGradient(
+      sheathLen + r * 0.06, 0, 0,
+      sheathLen + r * 0.06, 0, r * 0.55,
+    );
+    cg.addColorStop(0, `rgba(180, 255, 220, ${(0.7 * chargeProgress).toFixed(3)})`);
+    cg.addColorStop(1, "rgba(180, 255, 220, 0)");
+    ctx.fillStyle = cg;
+    ctx.beginPath();
+    ctx.arc(sheathLen + r * 0.06, 0, r * 0.55, 0, Math.PI * 2);
+    ctx.fill();
+  }
 
-  // Capsid head — hexagonal silhouette at the back. Pulses green.
+  // Capsid head — icosahedral hexagon with faceted shading. Pulses
+  // green and brighter during contraction (DNA being injected).
   const headPulse = 0.6 + 0.4 * Math.sin(t * 0.06);
+  const injectBoost = contractProgress < 0.5 ? 0.4 * (1 - contractProgress * 2) : 0;
+  // Outer shell
   ctx.beginPath();
   for (let i = 0; i < 6; i++) {
     const a = (i / 6) * Math.PI * 2 + Math.PI / 6;
@@ -1241,19 +1280,41 @@ function drawPhage(ctx: CanvasRenderingContext2D, world: World): void {
     else ctx.lineTo(hx, hy);
   }
   ctx.closePath();
-  const headGrad = ctx.createRadialGradient(-r * 0.4, 0, 0, -r * 0.4, 0, r * 0.7);
-  headGrad.addColorStop(0, `rgba(160, 240, 200, ${(0.95 * headPulse).toFixed(3)})`);
-  headGrad.addColorStop(0.6, "rgba(80, 160, 130, 0.92)");
-  headGrad.addColorStop(1, "rgba(30, 70, 60, 0.95)");
+  const headGrad = ctx.createRadialGradient(-r * 0.55, -r * 0.2, 0, -r * 0.4, 0, r * 0.85);
+  headGrad.addColorStop(0, `rgba(180, 250, 210, ${(0.95 * headPulse + injectBoost).toFixed(3)})`);
+  headGrad.addColorStop(0.55, "rgba(80, 160, 130, 0.92)");
+  headGrad.addColorStop(1, "rgba(25, 65, 55, 0.98)");
   ctx.fillStyle = headGrad;
   ctx.fill();
+  // Faceted internal triangles — fake icosahedral facets via 6 spokes
+  ctx.strokeStyle = "rgba(20, 50, 40, 0.45)";
+  ctx.lineWidth = 0.9;
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2 + Math.PI / 6;
+    const hx = -r * 0.4 + Math.cos(a) * r * 0.7;
+    const hy = Math.sin(a) * r * 0.7;
+    ctx.beginPath();
+    ctx.moveTo(-r * 0.4, 0);
+    ctx.lineTo(hx, hy);
+    ctx.stroke();
+  }
   ctx.strokeStyle = "rgba(20, 50, 40, 0.95)";
   ctx.lineWidth = 1.6;
-  ctx.stroke();
-  // DNA bundle inside the capsid — glowing core
-  ctx.fillStyle = `rgba(180, 255, 220, ${(0.85 * headPulse).toFixed(3)})`;
   ctx.beginPath();
-  ctx.arc(-r * 0.4, 0, r * 0.22, 0, Math.PI * 2);
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2 + Math.PI / 6;
+    const hx = -r * 0.4 + Math.cos(a) * r * 0.7;
+    const hy = Math.sin(a) * r * 0.7;
+    if (i === 0) ctx.moveTo(hx, hy);
+    else ctx.lineTo(hx, hy);
+  }
+  ctx.closePath();
+  ctx.stroke();
+  // DNA bundle inside the capsid — glowing core. Brightens during
+  // injection (the actual moment DNA flows down the tail).
+  ctx.fillStyle = `rgba(180, 255, 220, ${(0.85 * headPulse + injectBoost).toFixed(3)})`;
+  ctx.beginPath();
+  ctx.arc(-r * 0.4, 0, r * (0.22 + injectBoost * 0.06), 0, Math.PI * 2);
   ctx.fill();
 
   ctx.restore();
@@ -1360,6 +1421,29 @@ function drawCiliate(ctx: CanvasRenderingContext2D, world: World): void {
   ctx.ellipse(-r * 0.05, 0, r * 0.32, r * 0.22, 0.3, 0, Math.PI * 2);
   ctx.fill();
 
+  // Food vacuoles — every cell eaten leaves a small dark organelle
+  // inside the cytoplasm, drifting slowly. Capped at 6 visible so
+  // the body doesn't fill up.
+  const vacCount = Math.min(6, c.cellsEaten);
+  for (let i = 0; i < vacCount; i++) {
+    const phase = i * 1.7 + t * 0.015;
+    const orbR = r * 0.4 + (i % 3) * r * 0.08;
+    const ang = phase + (i % 2) * Math.PI;
+    const fx = Math.cos(ang) * orbR;
+    const fy = Math.sin(ang) * orbR * 0.7;
+    // Avoid overlap with macronucleus and oral groove
+    if (fx > r * 0.3) continue;
+    ctx.fillStyle = "rgba(40, 80, 60, 0.85)";
+    ctx.beginPath();
+    ctx.arc(fx, fy, 2.2 + Math.sin(t * 0.05 + i) * 0.4, 0, Math.PI * 2);
+    ctx.fill();
+    // Tiny captured-cell glint inside each vacuole
+    ctx.fillStyle = "rgba(180, 230, 220, 0.8)";
+    ctx.beginPath();
+    ctx.arc(fx - 0.5, fy - 0.5, 0.6, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
   ctx.restore();
 }
 
@@ -1447,21 +1531,50 @@ function drawHiveQueen(ctx: CanvasRenderingContext2D, world: World): void {
   ctx.strokeStyle = "rgba(80, 160, 80, 0.85)";
   ctx.lineWidth = 2;
   ctx.stroke();
-  // Stippled constituent cells — small dots arrayed around the
-  // membrane suggesting the colonial structure.
-  ctx.fillStyle = "rgba(180, 240, 170, 0.55)";
-  const cellRings = 3;
-  for (let ring = 0; ring < cellRings; ring++) {
-    const ringR = qr * (0.45 + ring * 0.18);
-    const cellsInRing = 6 + ring * 4;
-    const phaseOffset = ring * 0.4 + t * 0.012;
-    for (let i = 0; i < cellsInRing; i++) {
-      const a = (i / cellsInRing) * Math.PI * 2 + phaseOffset;
-      const px = qx + Math.cos(a) * ringR;
-      const py = qy + Math.sin(a) * ringR;
+  // Constituent cells — hexagonal lattice projected onto the sphere.
+  // Real Volvox colonies are a single layer of biflagellate cells
+  // arranged in a near-hex pattern. We render rings of small ovals
+  // (each cell is more like a tiny pear-shape) with a faint flagellum
+  // pair pointing outward.
+  const lattice = [
+    { ringR: 0.36, count: 6, phase: 0 },
+    { ringR: 0.58, count: 10, phase: 0.31 },
+    { ringR: 0.78, count: 14, phase: 0.16 },
+    { ringR: 0.92, count: 18, phase: 0.0 },
+  ];
+  for (const ring of lattice) {
+    const rR = qr * ring.ringR;
+    const phaseOffset = ring.phase + t * 0.008;
+    for (let i = 0; i < ring.count; i++) {
+      const a = (i / ring.count) * Math.PI * 2 + phaseOffset;
+      const cellX = qx + Math.cos(a) * rR;
+      const cellY = qy + Math.sin(a) * rR;
+      // Project oval shrinking with distance from center for depth.
+      const d = ring.ringR;
+      const cellRad = 1.4 + 0.8 * (1 - d);
+      ctx.fillStyle = `rgba(180, 240, 170, ${(0.45 + 0.25 * (1 - d)).toFixed(3)})`;
       ctx.beginPath();
-      ctx.arc(px, py, 1.6, 0, Math.PI * 2);
+      ctx.ellipse(cellX, cellY, cellRad * 1.1, cellRad * 0.85, a, 0, Math.PI * 2);
       ctx.fill();
+      ctx.strokeStyle = "rgba(40, 100, 50, 0.55)";
+      ctx.lineWidth = 0.6;
+      ctx.stroke();
+      // Tiny flagella pair — radial-outward whisps animate per ring.
+      if (d > 0.55) {
+        const wave = Math.sin(t * 0.2 + i * 0.7);
+        const flagLen = 3 + Math.abs(wave) * 1.5;
+        ctx.strokeStyle = `rgba(200, 255, 180, ${(0.45 + 0.2 * d).toFixed(3)})`;
+        ctx.lineWidth = 0.7;
+        for (const fa of [-0.18, 0.18]) {
+          ctx.beginPath();
+          ctx.moveTo(cellX, cellY);
+          ctx.lineTo(
+            cellX + Math.cos(a + fa) * flagLen,
+            cellY + Math.sin(a + fa) * flagLen,
+          );
+          ctx.stroke();
+        }
+      }
     }
   }
   // Inner gonidia (germ cells that become daughter colonies)
@@ -1511,6 +1624,50 @@ function drawMirror(ctx: CanvasRenderingContext2D, world: World): void {
   ctx.beginPath();
   ctx.arc(x, y, r * 2.6, 0, Math.PI * 2);
   ctx.fill();
+
+  // Dramatic pseudopod extensions — three long protoplasm arms that
+  // slowly drift around the body. Each one extrudes + retracts on
+  // its own slow cycle so the amoeba reads as ALWAYS reaching.
+  const PSEUDOPODS = 3;
+  for (let i = 0; i < PSEUDOPODS; i++) {
+    const seed = i * 2.39 + m.hueShift * 0.013;
+    const cycleT = (t * 0.018 + seed) % (Math.PI * 2);
+    // Length curve: 0 → max → 0 across the cycle
+    const reach = 0.5 + 0.5 * Math.sin(cycleT);
+    const baseAngle = seed + t * 0.005 * (i % 2 === 0 ? 1 : -1);
+    const armLen = r * (0.6 + reach * 1.4);
+    const baseX = x + Math.cos(baseAngle) * r * 0.85;
+    const baseY = y + Math.sin(baseAngle) * r * 0.85;
+    const tipX = x + Math.cos(baseAngle) * (r * 0.85 + armLen);
+    const tipY = y + Math.sin(baseAngle) * (r * 0.85 + armLen);
+    // Wobble the path slightly perpendicular for organic feel
+    const perpA = baseAngle + Math.PI / 2;
+    const ctrlX = (baseX + tipX) / 2 + Math.cos(perpA) * Math.sin(t * 0.05 + seed) * r * 0.15;
+    const ctrlY = (baseY + tipY) / 2 + Math.sin(perpA) * Math.sin(t * 0.05 + seed) * r * 0.15;
+    // Tapered tube — thicker at the body, narrowing to a tip.
+    const segments = 12;
+    for (let s = 0; s < segments; s++) {
+      const f0 = s / segments;
+      const f1 = (s + 1) / segments;
+      const sample = (f: number) => {
+        const omf = 1 - f;
+        return {
+          x: omf * omf * baseX + 2 * omf * f * ctrlX + f * f * tipX,
+          y: omf * omf * baseY + 2 * omf * f * ctrlY + f * f * tipY,
+        };
+      };
+      const p0 = sample(f0);
+      const p1 = sample(f1);
+      const w = (1 - f0) * r * 0.32 + 1.4;
+      ctx.strokeStyle = `rgba(180, 80, 180, ${(0.85 - f0 * 0.45).toFixed(3)})`;
+      ctx.lineWidth = w;
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(p0.x, p0.y);
+      ctx.lineTo(p1.x, p1.y);
+      ctx.stroke();
+    }
+  }
 
   // Bell shape — same parametric perimeter as the player's bell,
   // morphed by the mirror's own absorbed dict + extra protoplasmic
@@ -1902,6 +2059,24 @@ function drawCentipede(ctx: CanvasRenderingContext2D, world: World): void {
         else ctx.lineTo(x, y);
       }
       ctx.stroke();
+    }
+
+    // Traveling cytoplasmic pulse — bright wave moves head → tail
+    // along the centerline. Reads as cell-internal protoplasmic
+    // streaming. Width and brightness ramp through a bell curve.
+    const pulseSpeed = 0.012;
+    const pulseU = ((t * pulseSpeed) % 1.4) - 0.2;
+    const pulseSpread = 0.25;
+    for (let i = 0; i < samples.length; i++) {
+      const sp = samples[i];
+      const dist = Math.abs(sp.u - pulseU);
+      if (dist > pulseSpread) continue;
+      const intensity = 1 - dist / pulseSpread;
+      const w = widthAt(sp.u) * (0.4 + intensity * 0.4);
+      ctx.fillStyle = `rgba(220, 255, 180, ${(0.55 * intensity).toFixed(3)})`;
+      ctx.beginPath();
+      ctx.ellipse(sp.x, sp.y, w * 0.6, w * 0.5, Math.atan2(sp.ty, sp.tx), 0, Math.PI * 2);
+      ctx.fill();
     }
 
     // Faint segment-seam tick marks across the body — perpendicular

@@ -531,6 +531,8 @@ export class World {
     nextDamageTickN: number;
     /** wallMs of next virion fire. */
     nextFireAtMs: number;
+    /** wallMs of last fire — drives tail-contraction animation. */
+    lastFiredMs: number;
     /** Active virion projectiles aimed at the player. */
     virions: { x: number; y: number; vx: number; vy: number; bornMs: number }[];
   } | null;
@@ -1291,6 +1293,7 @@ export class World {
       spawnedAtTickN: this.tickN,
       nextDamageTickN: 0,
       nextFireAtMs: this.wallMs + 1500,  // brief grace before first shot
+      lastFiredMs: -9999,
       virions: [],
     };
     this.events.push("bossSpawn");
@@ -1965,6 +1968,7 @@ export class World {
       });
       p.nextFireAtMs = this.wallMs +
         Math.max(1500, PHAGE_FIRE_INTERVAL_MS - p.cycleRound * 300 - (p.level - 1) * 200);
+      p.lastFiredMs = this.wallMs;
       this.events.push("phageFire");
     }
 
