@@ -1,5 +1,6 @@
 import type { World } from "./world";
 import type { Body, NodeTypeId } from "./types";
+import { STAGE_THRESHOLDS } from "./world";
 import { currentTheme } from "@/data/themes";
 
 /* ─── Background: ocean depth + light shafts ─────────────────────── */
@@ -2095,6 +2096,210 @@ export function drawThumbstick(ctx: CanvasRenderingContext2D, world: World): voi
  * chevron at the viewport edge pointing toward it. Runs in screen
  * space after the camera restore so it sits on top of everything.
  */
+/**
+ * Bell hit-flash + health ring — world-space, drawn after bodies so
+ * it sits ON TOP of the bell glow.
+ *
+ *   - Hit flash: red ring + radial wash on the bell for ~14 ticks
+ *     after damage. Decays out smoothly.
+ *   - Health ring: arc above the bell showing how far you are from
+ *     dropping a stage. Green → amber → red as you near demotion.
+ */
+export function drawPlayerHealthSignal(
+  ctx: CanvasRenderingContext2D,
+  world: World,
+): void {
+  const core = world.entityBodies[0];
+  if (!core) return;
+  const cx = core.x ?? 0;
+  const cy = core.y ?? 0;
+  const cr = core.radius;
+
+  // ── Hit flash ────────────────────────────────────────────────────
+  const sinceHit = world.tickN - (world.lastDamageTickN ?? -9999);
+  if (sinceHit >= 0 && sinceHit < 14) {
+    const f = 1 - sinceHit / 14;
+    // Red wash inside the bell
+    const wash = ctx.createRadialGradient(cx, cy, 0, cx, cy, cr * 1.4);
+    wash.addColorStop(0, `rgba(255, 70, 70, ${(0.55 * f).toFixed(3)})`);
+    wash.addColorStop(1, "rgba(255, 70, 70, 0)");
+    ctx.fillStyle = wash;
+    ctx.beginPath();
+    ctx.arc(cx, cy, cr * 1.4, 0, Math.PI * 2);
+    ctx.fill();
+    // Sharp red rim that fades + expands
+    ctx.strokeStyle = `rgba(255, 90, 90, ${(0.85 * f).toFixed(3)})`;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(cx, cy, cr * (1.05 + (1 - f) * 0.35), 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // ── Health ring ──────────────────────────────────────────────────
+  // "Health" = progress within the current stage band. At the band
+  // floor the ring is empty (about to demote on next hit); at the
+  // ceiling it's full (next hit is cheap). Always-visible so the
+  // player has a constant readout, dimmed when full.
+  const totalAbsorbed = world.totalAbsorbed;
+  const stage = world.evolutionStage;
+  const lo = STAGE_THRESHOLDS[stage] ?? 0;
+  const hi = STAGE_THRESHOLDS[stage + 1] ?? lo + 1;
+  const span = Math.max(1, hi - lo);
+  const frac = Math.max(0, Math.min(1, (totalAbsorbed - lo) / span));
+  // Color stops: red <25% → amber <60% → green
+  const color =
+    frac < 0.25
+      ? `rgba(255, 90, 80, 0.95)`
+      : frac < 0.6
+      ? `rgba(255, 200, 90, 0.9)`
+      : `rgba(140, 220, 150, 0.85)`;
+  const ringR = cr * 1.32;
+  const startA = -Math.PI / 2 - Math.PI * 0.85;
+  const endA = -Math.PI / 2 + Math.PI * 0.85;
+  const arcSpan = endA - startA;
+  // Backdrop arc
+  ctx.lineCap = "round";
+  ctx.strokeStyle = "rgba(15, 20, 35, 0.8)";
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  ctx.arc(cx, cy, ringR, startA, endA);
+  ctx.stroke();
+  // Fill arc
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.arc(cx, cy, ringR, startA, startA + arcSpan * frac);
+  ctx.stroke();
+  // Tick at the demotion threshold (left edge) — danger reminder
+  ctx.strokeStyle = "rgba(255, 90, 80, 0.55)";
+  ctx.lineWidth = 1.4;
+  ctx.beginPath();
+  ctx.moveTo(cx + Math.cos(startA) * (ringR - 6), cy + Math.sin(startA) * (ringR - 6));
+  ctx.lineTo(cx + Math.cos(startA) * (ringR + 6), cy + Math.sin(startA) * (ringR + 6));
+  ctx.stroke();
+}
+
+/**
+ * Boss HP bar — screen-space pill at the top of the viewport. Only
+ * appears while a boss is on the field. Tints red and shows
+ * 'ENRAGED' badge once the head crosses the aggro threshold.
+ */
+export function drawBossHealthBar(
+  ctx: CanvasRenderingContext2D,
+  world: World,
+  vw: number,
+): void {
+  const c = world.centipede;
+  if (!c) return;
+  const hp = Math.max(0, c.head.health ?? 0);
+  const maxHp = Math.max(1, c.maxHealth);
+  const frac = Math.min(1, hp / maxHp);
+  const enraged = c.enragedFlashed;
+
+  // Bar dimensions
+  const barW = Math.min(420, vw * 0.7);
+  const barH = 14;
+  const barX = (vw - barW) / 2;
+  const barY = Math.max(56, vw * 0.04);
+
+  // Backdrop
+  ctx.save();
+  ctx.fillStyle = "rgba(8, 10, 18, 0.78)";
+  ctx.beginPath();
+  roundRect(ctx, barX - 2, barY - 2, barW + 4, barH + 4, 8);
+  ctx.fill();
+  ctx.strokeStyle = enraged
+    ? "rgba(255, 70, 60, 0.9)"
+    : "rgba(180, 90, 70, 0.55)";
+  ctx.lineWidth = 1.4;
+  ctx.beginPath();
+  roundRect(ctx, barX - 2, barY - 2, barW + 4, barH + 4, 8);
+  ctx.stroke();
+
+  // Empty track
+  ctx.fillStyle = "rgba(40, 16, 14, 0.85)";
+  ctx.beginPath();
+  roundRect(ctx, barX, barY, barW, barH, 6);
+  ctx.fill();
+
+  // Fill — gradient from deep red → bright red. Pulses when enraged.
+  const fillW = Math.max(0, barW * frac);
+  const grad = ctx.createLinearGradient(barX, 0, barX + fillW, 0);
+  if (enraged) {
+    const pulse = 0.7 + 0.3 * Math.sin(world.tickN * 0.25);
+    grad.addColorStop(0, `rgba(255, ${Math.round(60 + 40 * pulse)}, 50, 0.95)`);
+    grad.addColorStop(1, `rgba(255, ${Math.round(140 + 60 * pulse)}, 100, 0.95)`);
+  } else {
+    grad.addColorStop(0, "rgba(200, 60, 60, 0.95)");
+    grad.addColorStop(1, "rgba(255, 110, 90, 0.95)");
+  }
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  roundRect(ctx, barX, barY, fillW, barH, 6);
+  ctx.fill();
+
+  // Enrage threshold tick (40% from left)
+  const tickX = barX + barW * 0.4;
+  ctx.strokeStyle = "rgba(255, 200, 200, 0.55)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(tickX, barY);
+  ctx.lineTo(tickX, barY + barH);
+  ctx.stroke();
+
+  // Label + numeric
+  ctx.font =
+    '600 11px ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace';
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = "rgba(245, 220, 220, 0.95)";
+  const label = `CENTIPEDE · LV ${c.level}${c.cycleRound > 0 ? ` · CYCLE ${c.cycleRound}` : ""}`;
+  ctx.textAlign = "left";
+  ctx.fillText(label, barX, barY - 10);
+  ctx.textAlign = "right";
+  ctx.fillStyle = "rgba(255, 220, 220, 0.85)";
+  ctx.fillText(`${Math.ceil(hp)} / ${Math.ceil(maxHp)}`, barX + barW, barY - 10);
+
+  // ENRAGED badge (right of bar)
+  if (enraged) {
+    const badgeX = barX + barW + 8;
+    const badgeY = barY - 1;
+    const badgeH = barH + 2;
+    ctx.font =
+      '700 10px ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace';
+    const text = "ENRAGED";
+    const textW = ctx.measureText(text).width + 14;
+    ctx.fillStyle = "rgba(255, 70, 60, 0.92)";
+    ctx.beginPath();
+    roundRect(ctx, badgeX, badgeY, textW, badgeH, 5);
+    ctx.fill();
+    ctx.fillStyle = "rgba(15, 5, 5, 0.95)";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    ctx.fillText(text, badgeX + 7, badgeY + badgeH / 2 + 0.5);
+  }
+  ctx.restore();
+}
+
+function roundRect(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number,
+): void {
+  const rr = Math.min(r, w / 2, h / 2);
+  ctx.moveTo(x + rr, y);
+  ctx.lineTo(x + w - rr, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + rr);
+  ctx.lineTo(x + w, y + h - rr);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - rr, y + h);
+  ctx.lineTo(x + rr, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - rr);
+  ctx.lineTo(x, y + rr);
+  ctx.quadraticCurveTo(x, y, x + rr, y);
+}
+
 export function drawBossIndicator(
   ctx: CanvasRenderingContext2D,
   world: World,

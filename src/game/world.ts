@@ -349,6 +349,8 @@ export class World {
   editor: EditorState;
   /** Parts the player has attached to the bell this run (visible forever). */
   placedParts: PlacedPart[];
+  /** tickN at which the player last took damage — drives the hit flash. */
+  lastDamageTickN: number;
   /** 0 (surface) → 3 (depth 60). Darkens the bg gradient as you descend. */
   biomeStage: number;
   /** Number of bosses killed this run — surfaced on the run summary. */
@@ -378,6 +380,8 @@ export class World {
     lungeDy: number;
     /** True once head HP crosses the enrage threshold — used for the one-time transition flash. */
     enragedFlashed: boolean;
+    /** Cached max HP at spawn — render uses this for the boss bar fraction. */
+    maxHealth: number;
   } | null;
   /** wallMs at which to spawn the next centipede; null = no spawn pending. */
   nextCentipedeAtMs: number | null;
@@ -465,6 +469,7 @@ export class World {
       triggeredStage: -1,
     };
     this.placedParts = [];
+    this.lastDamageTickN = -9999;
     this.biomeStage = 0;
     this.bossesDefeated = 0;
     this.nextMilestoneIndex = 0;
@@ -987,6 +992,7 @@ export class World {
       lungeDx: fx,
       lungeDy: fy,
       enragedFlashed: false,
+      maxHealth: health,
     };
     this.events.push("bossSpawn");
     this.addShake(15);
@@ -1395,6 +1401,8 @@ export class World {
    * Replaces the legacy pruneFromGraph in the absorb-counter model.
    */
   damageAbsorbed(amount: number): void {
+    // Mark damage tick — render uses this for bell hit-flash.
+    this.lastDamageTickN = this.tickN;
     // Membrane armor: each absorbed membrane reduces incoming damage
     // by 1, with a floor of 1 so you always feel the hit.
     const armor = this.absorbed.membrane ?? 0;

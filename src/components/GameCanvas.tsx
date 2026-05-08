@@ -13,6 +13,8 @@ import {
   drawTelegraphs,
   drawThumbstick,
   drawBossIndicator,
+  drawBossHealthBar,
+  drawPlayerHealthSignal,
   applyCamera,
 } from "@/game/render";
 import type { TraitState } from "@/game/traits";
@@ -471,8 +473,11 @@ export default function GameCanvas() {
       drawBodies(ctx, world, hoveredId, draggingId);
       drawPredators(ctx, world);
       drawSparkles(ctx, world);
+      drawPlayerHealthSignal(ctx, world);
       ctx.restore();
-      // Screen-space overlays: telegraph arrows, boss indicator, thumbstick.
+      // Screen-space overlays: boss bar, telegraph arrows, boss
+      // indicator, thumbstick.
+      drawBossHealthBar(ctx, world, width);
       drawTelegraphs(ctx, world, width, height);
       drawBossIndicator(ctx, world, width, height);
       drawThumbstick(ctx, world);
