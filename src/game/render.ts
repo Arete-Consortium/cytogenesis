@@ -421,12 +421,25 @@ function drawCoreTrail(ctx: CanvasRenderingContext2D, world: World): void {
  */
 let cachedBellAngle = 0;
 
+/** Counts of each NodeTypeId in the entity graph (excluding core). */
+function entityComposition(bodies: Body[]): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (let i = 1; i < bodies.length; i++) {
+    counts[bodies[i].type] = (counts[bodies[i].type] || 0) + 1;
+  }
+  return counts;
+}
+
 function drawCore(ctx: CanvasRenderingContext2D, world: World, core: Body): void {
   const x = core.x ?? 0;
   const y = core.y ?? 0;
   const t = world.tickN;
   const breath = 1 + Math.sin(t * 0.04) * 0.06;
   const rr = core.radius * 1.55 * breath;
+  const comp = entityComposition(world.entityBodies);
+  const tentacleCount = Math.min(9, 5 + (comp.propulsion ?? 0));
+  const organCount = Math.min(7, 3 + (comp.sensor ?? 0));
+  const spikeCount = Math.min(8, comp.stinger ?? 0);
 
   // Bell rotation — point tentacles opposite the velocity. Smoothly
   // lerp toward the target angle (15%/frame ≈ 150ms time-constant)
@@ -457,9 +470,11 @@ function drawCore(ctx: CanvasRenderingContext2D, world: World, core: Body): void
   ctx.arc(0, 0, rr * 2.4, 0, Math.PI * 2);
   ctx.fill();
 
-  // 5 tentacles trailing in local +y → screen-direction = -velocity
+  // Tentacles — count grows with propulsion. Centered around 0.
   ctx.lineCap = "round";
-  for (let strand = -2; strand <= 2; strand++) {
+  const halfTent = (tentacleCount - 1) / 2;
+  for (let i = 0; i < tentacleCount; i++) {
+    const strand = i - halfTent;
     const startX = strand * (rr * 0.32);
     const startY = rr * 0.4;
     const length = rr * 4.0;
@@ -476,7 +491,7 @@ function drawCore(ctx: CanvasRenderingContext2D, world: World, core: Body): void
     grad.addColorStop(0, T.bell.tentacle0);
     grad.addColorStop(1, T.bell.tentacle1);
     ctx.strokeStyle = grad;
-    ctx.lineWidth = 1.8 - Math.abs(strand) * 0.25;
+    ctx.lineWidth = 1.8 - Math.min(Math.abs(strand) * 0.18, 1.2);
     ctx.stroke();
   }
 
@@ -494,12 +509,48 @@ function drawCore(ctx: CanvasRenderingContext2D, world: World, core: Body): void
   ctx.lineWidth = 1.1;
   ctx.stroke();
 
-  // Internal organs
+  // Stinger spikes around the upper rim — small triangles pointing
+  // outward from the bell, count = captured stingers.
+  if (spikeCount > 0) {
+    const stingerColor = currentTheme().nodeColors.stinger;
+    ctx.fillStyle = stingerColor;
+    // Distribute around the upper hemisphere of the bell (-π .. 0 in
+    // canvas coords, since +y is down).
+    for (let i = 0; i < spikeCount; i++) {
+      const angle = -Math.PI + ((i + 0.5) / spikeCount) * Math.PI;
+      const baseX = Math.cos(angle) * rr;
+      const baseY = Math.sin(angle) * rr;
+      const tipX = Math.cos(angle) * rr * 1.28;
+      const tipY = Math.sin(angle) * rr * 1.28;
+      const perpX = -Math.sin(angle);
+      const perpY = Math.cos(angle);
+      const w = rr * 0.11;
+      ctx.beginPath();
+      ctx.moveTo(baseX + perpX * w, baseY + perpY * w);
+      ctx.lineTo(tipX, tipY);
+      ctx.lineTo(baseX - perpX * w, baseY - perpY * w);
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+
+  // Internal organs — count grows with sensor. Arranged in an arc near
+  // the top-interior of the bell.
   ctx.fillStyle = T.bell.organ;
-  for (let i = -1; i <= 1; i++) {
+  if (organCount === 1) {
     ctx.beginPath();
-    ctx.arc(i * rr * 0.28, -rr * 0.05, rr * 0.09, 0, Math.PI * 2);
+    ctx.arc(0, -rr * 0.05, rr * 0.09, 0, Math.PI * 2);
     ctx.fill();
+  } else {
+    const arc = Math.PI * 0.78;
+    for (let i = 0; i < organCount; i++) {
+      const a = -Math.PI / 2 + (i / (organCount - 1) - 0.5) * arc;
+      const ox = Math.cos(a) * rr * 0.42;
+      const oy = Math.sin(a) * rr * 0.42 + rr * 0.05;
+      ctx.beginPath();
+      ctx.arc(ox, oy, rr * 0.09, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
 
   // Top highlight

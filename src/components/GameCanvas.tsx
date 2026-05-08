@@ -454,19 +454,7 @@ export default function GameCanvas() {
   return (
     <div className="relative h-full w-full">
       <canvas ref={canvasRef} className="absolute inset-0 h-full w-full touch-none select-none" />
-      {/* Top-left: just timer + peak. Quiet. */}
-      <div
-        className="pointer-events-none absolute left-2 top-2 font-mono text-[11px] leading-tight text-zinc-300/90"
-        style={{
-          top: "max(0.5rem, env(safe-area-inset-top))",
-          left: "max(0.75rem, env(safe-area-inset-left))",
-        }}
-      >
-        <div className="text-zinc-200">{formatDuration(stats.runDurationMs)}</div>
-        <div className="text-zinc-500">peak {stats.peakCaptured}</div>
-      </div>
-
-      {/* Top-right: captured count + trait chips. */}
+      {/* Top-right: timer (small), captured count, trait chips. */}
       <div
         className="pointer-events-none absolute right-2 top-2 flex flex-col items-end gap-1.5 font-mono text-[11px] text-zinc-300/90"
         style={{
@@ -474,6 +462,9 @@ export default function GameCanvas() {
           right: "max(0.75rem, env(safe-area-inset-right))",
         }}
       >
+        <div className="text-[10px] uppercase tracking-wider text-zinc-500">
+          {formatDuration(stats.runDurationMs)}
+        </div>
         <div className="text-zinc-200">
           <span className="text-cyan-300">{stats.captured}</span>
           <span className="text-zinc-600"> bonded</span>

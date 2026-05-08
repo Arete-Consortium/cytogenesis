@@ -222,7 +222,9 @@ export class World {
       .alphaDecay(0.005)
       .stop();
 
-    this.camera = { k: 1, x: 0, y: 0 };
+    // Default k=0.85 gives a wider tactical view so predators are
+    // visible earlier; player can still pinch in for precision.
+    this.camera = { k: 0.85, x: 0, y: 0 };
   }
 
   /** Combined view of all bodies — used by render + hitTest. */
@@ -365,31 +367,32 @@ export class World {
   }
 
   /**
-   * Camera follow with a velocity-proportional lead so the player can
-   * see what's ahead. At rest, target = viewport center. At top speed,
-   * target = ~LEAD_MAX world units ahead in the velocity direction.
-   * Lerp slightly slower (0.12) so the lead reads smoothly.
+   * Deadzone camera: the bell moves freely on screen while inside a
+   * rectangular deadzone centered on the viewport. Only when it tries
+   * to exit does the camera shift to keep it inside. Reads as "the
+   * creature swims" instead of "the world flows past".
    */
   private updateCameraFollow(): void {
     if (this.viewportWidth === 0 || this.viewportHeight === 0) return;
     const core = this.entityBodies[0];
     if (!core) return;
-    const vx = core.vx ?? 0;
-    const vy = core.vy ?? 0;
-    const sp = Math.hypot(vx, vy);
-    const LEAD_MAX = 80;
-    let leadX = 0;
-    let leadY = 0;
-    if (sp > 0.5) {
-      const t = Math.min(1, sp / 9); // 9 wu/tick is MAX_VEL
-      leadX = (vx / sp) * t * LEAD_MAX;
-      leadY = (vy / sp) * t * LEAD_MAX;
-    }
-    const targetX = this.viewportWidth / 2 - ((core.x ?? 0) + leadX) * this.camera.k;
-    const targetY = this.viewportHeight / 2 - ((core.y ?? 0) + leadY) * this.camera.k;
-    const lerp = 0.12;
-    this.camera.x += (targetX - this.camera.x) * lerp;
-    this.camera.y += (targetY - this.camera.y) * lerp;
+    const k = this.camera.k;
+    const screenX = (core.x ?? 0) * k + this.camera.x;
+    const screenY = (core.y ?? 0) * k + this.camera.y;
+    const cx = this.viewportWidth / 2;
+    const cy = this.viewportHeight / 2;
+    // Deadzone half-extents — 25% of viewport in each direction.
+    const dzX = this.viewportWidth * 0.25;
+    const dzY = this.viewportHeight * 0.25;
+    let dCamX = 0;
+    let dCamY = 0;
+    if (screenX > cx + dzX) dCamX = cx + dzX - screenX;
+    else if (screenX < cx - dzX) dCamX = cx - dzX - screenX;
+    if (screenY > cy + dzY) dCamY = cy + dzY - screenY;
+    else if (screenY < cy - dzY) dCamY = cy - dzY - screenY;
+    const lerp = 0.22;
+    this.camera.x += dCamX * lerp;
+    this.camera.y += dCamY * lerp;
   }
 
   /** Ring-buffer of recent core positions. Drives the wake/tentacle render. */
@@ -823,6 +826,13 @@ export class World {
     // any in-flight lock-on bias.
     free.magnetized = false;
     this.peakCaptured = Math.max(this.peakCaptured, this.entityBodies.length);
+    // Visible evolution: grow the core's physics radius with size so
+    // capture surface scales (you swallow more as you become bigger).
+    // Cap at ~36px so the bell doesn't dominate the viewport.
+    const core = this.entityBodies[0];
+    if (core) {
+      core.radius = 18 + Math.min(this.entityBodies.length / 5, 18);
+    }
     this.events.push("capture");
     // Combo detection — sliding window of recent capture timestamps.
     this.recentCaptures.push(this.wallMs);
