@@ -250,6 +250,8 @@ export class World {
   biomeStage: number;
   /** Number of bosses killed this run — surfaced on the run summary. */
   bossesDefeated: number;
+  /** Index into BIOME_MILESTONES — only advances when a boss isn't already on the field. */
+  private nextMilestoneIndex: number;
   /** Wallclock at which the next chloroplast regen will fire. */
   private nextRegenAtMs: number;
   /** Wallclock at which the next ecology pass will fire. */
@@ -327,6 +329,7 @@ export class World {
     this.paused = false;
     this.biomeStage = 0;
     this.bossesDefeated = 0;
+    this.nextMilestoneIndex = 0;
     this.nextRegenAtMs = 0;
     this.nextEcologyAtMs = 4000;
     this.viewportWidth = 0;
@@ -475,7 +478,6 @@ export class World {
       this.maybeSpawnPredator();
       this.resolveTelegraphs();
       this.applySteerForce();
-      this.applyAutonomousSwim();
       this.maybeRegen();
       this.maybeRunEcology();
     }
@@ -509,10 +511,14 @@ export class World {
     core.fx = null;
     core.fy = null;
     const comboMul = this.wallMs < this.comboActiveUntilMs ? COMBO_ACCEL_MUL : 1;
-    const accel = t * 1.5 * comboMul;
+    // Propulsion now boosts INPUT acceleration + max velocity instead
+    // of auto-piloting. Each propulsion absorbed = +20% accel, +1
+    // max-vel. The player is always in control.
+    const propMul = 1 + (this.traits.speedMul ?? 0);
+    const accel = t * 1.5 * comboMul * propMul;
     core.vx = (core.vx ?? 0) + ux * accel;
     core.vy = (core.vy ?? 0) + uy * accel;
-    const MAX_VEL = 9 * comboMul;
+    const MAX_VEL = (9 + (this.absorbed.propulsion ?? 0) * 0.5) * comboMul;
     const sp = Math.hypot(core.vx ?? 0, core.vy ?? 0);
     if (sp > MAX_VEL) {
       core.vx = (core.vx ?? 0) * (MAX_VEL / sp);
@@ -600,6 +606,30 @@ export class World {
   /** Endless-mode cycle counter — every CYCLE_LEN absorbed = +1 cycle. */
   private cycleRound(): number {
     return Math.floor(this.totalAbsorbed / CYCLE_LEN);
+  }
+
+  /**
+   * Fire deferred biome/boss milestones if the player has crossed the
+   * next threshold AND the previous boss is dead. Loop in case
+   * multiple thresholds were crossed during a long boss fight.
+   */
+  private checkMilestones(): void {
+    while (this.nextMilestoneIndex < BIOME_MILESTONES.length) {
+      const next = BIOME_MILESTONES[this.nextMilestoneIndex];
+      if (this.totalAbsorbed < next) break;
+      const bossAlive = this.predators.some((p) => p.bossKind);
+      if (bossAlive) break;
+      this.events.push(`biome:${next}` as WorldEvent);
+      this.addShake(8);
+      this.biomeStage = Math.min(this.biomeStage + 1, 4);
+      if (next === TRANSCEND_AT) {
+        this.addShake(18);
+        this.events.push("transcend");
+      }
+      const bossKind = BOSS_KIND_BY_BIOME[next];
+      if (bossKind) this.spawnBoss(bossKind);
+      this.nextMilestoneIndex += 1;
+    }
   }
 
   /**
@@ -712,6 +742,8 @@ export class World {
       }
       this.peakCaptured = Math.max(this.peakCaptured, this.totalAbsorbed);
       this.traits = recomputeTraits(this.absorbed);
+      // Boss died — any deferred milestones can fire now.
+      this.checkMilestones();
     } else {
       this.events.push("killPred");
       this.addShake(p.variant === "brute" ? 9 : 5);
@@ -1259,26 +1291,14 @@ export class World {
       this.recentCaptures = [];
     }
 
-    // Biome milestones based on totalAbsorbed.
-    for (let m = 0; m < BIOME_MILESTONES.length; m++) {
-      const t = BIOME_MILESTONES[m];
-      if (this.totalAbsorbed === t) {
-        this.events.push(`biome:${t}` as WorldEvent);
-        this.addShake(8);
-        this.biomeStage = m + 1;
-        // Spawn the biome boss.
-        const bossKind = BOSS_KIND_BY_BIOME[t];
-        if (bossKind) this.spawnBoss(bossKind);
-      }
-    }
+    // Biome milestones — fire ONLY when the next-unfired threshold is
+    // met AND no boss is currently on the field. Otherwise queue. The
+    // player has to finish the current boss before the next biome
+    // event (and its boss) triggers.
+    this.checkMilestones();
 
-    // Transcend is now a *milestone*, not a run-end. Run continues
-    // endlessly until death; difficulty scales per cycle (see
-    // cycleRound / difficulty getters below).
-    if (this.totalAbsorbed === TRANSCEND_AT) {
-      this.addShake(18);
-      this.events.push("transcend");
-    }
+    // Transcend event is now folded into checkMilestones() so it's
+    // gated on boss-clear like every other biome milestone.
 
     this.emitSparkle(free.x ?? 0, free.y ?? 0, "rgba(160, 240, 255,");
     this.reheat(0.4);
