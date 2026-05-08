@@ -1,4 +1,5 @@
 import Link from "next/link";
+import TitleStats from "@/components/TitleStats";
 
 export default function Home() {
   return (
@@ -15,7 +16,7 @@ export default function Home() {
       >
         Begin →
       </Link>
-      <p className="text-xs text-zinc-600">v0.1.0 · MVP</p>
+      <TitleStats />
     </main>
   );
 }

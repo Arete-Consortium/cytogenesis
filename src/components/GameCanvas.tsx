@@ -19,6 +19,10 @@ import {
 import type { TraitState } from "@/game/traits";
 import { emptyTraitState } from "@/game/traits";
 import { audio } from "@/lib/audio";
+import { recordRun, type BestRun } from "@/meta/persist";
+
+const MUTE_KEY = "cytogenesis:muted";
+const TUTORIAL_KEY = "cytogenesis:tutorialSeen";
 
 interface FrameStats {
   fps: number;
@@ -63,6 +67,43 @@ export default function GameCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [runId, setRunId] = useState(0);
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [muted, setMuted] = useState(false);
+  const [showTutorial, setShowTutorial] = useState(true);
+  const [bestResult, setBestResult] = useState<{ best: BestRun | null; isNewBest: boolean }>(
+    { best: null, isNewBest: false },
+  );
+  const hasRecordedRef = useRef(false);
+
+  // Initialize mute + tutorial from localStorage on mount.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const m = localStorage.getItem(MUTE_KEY) === "1";
+    setMuted(m);
+    audio.setMuted(m);
+    setShowTutorial(localStorage.getItem(TUTORIAL_KEY) !== "1");
+  }, []);
+
+  const toggleMute = () => {
+    setMuted((m) => {
+      const next = !m;
+      audio.setMuted(next);
+      try {
+        localStorage.setItem(MUTE_KEY, next ? "1" : "0");
+      } catch {
+        /* private mode */
+      }
+      return next;
+    });
+  };
+
+  const dismissTutorial = () => {
+    setShowTutorial(false);
+    try {
+      localStorage.setItem(TUTORIAL_KEY, "1");
+    } catch {
+      /* private mode */
+    }
+  };
   const [stats, setStats] = useState<FrameStats>({
     fps: 0,
     ms: 0,
@@ -186,6 +227,9 @@ export default function GameCanvas() {
     const onPointerDown = (e: PointerEvent) => {
       // First user gesture also unlocks the audio context.
       audio.init();
+      // Tutorial dismisses on the first real touch (whether or not it
+      // produces motion — touching the canvas is the gesture).
+      if (showTutorial) dismissTutorial();
       activePointers.add(e.pointerId);
       if (activePointers.size > 1) {
         clearStick();
@@ -328,6 +372,10 @@ export default function GameCanvas() {
             audio.transcend(); // re-use the chord — feels milestone-y
             queueToast(`DEPTH ${ev.slice("biome:".length)}`);
           }
+          else if (ev === "combo") {
+            audio.lockOn(); // bright zap — combo earned
+            queueToast("COMBO");
+          }
         }
         world.events.length = 0;
       }
@@ -340,6 +388,15 @@ export default function GameCanvas() {
           world.runStatus !== "running" &&
           world.runEndedAtMs != null &&
           world.wallMs - world.runEndedAtMs >= 800;
+        // First time the overlay becomes ready, persist the run + record best.
+        if (overlayReady && !hasRecordedRef.current) {
+          hasRecordedRef.current = true;
+          recordRun({
+            peakCaptured: world.peakCaptured,
+            durationMs: world.runEndedAtMs ?? world.wallMs,
+            bonds: world.bonds.length,
+          }).then(setBestResult);
+        }
         setStats({
           fps: Math.round(fpsAccum / elapsed),
           ms: Math.round(frameMs * 100) / 100,
@@ -382,7 +439,11 @@ export default function GameCanvas() {
     };
   }, [runId]);
 
-  const restart = () => setRunId((r) => r + 1);
+  const restart = () => {
+    hasRecordedRef.current = false;
+    setBestResult({ best: null, isNewBest: false });
+    setRunId((r) => r + 1);
+  };
 
   const traitList = Array.from(stats.traits.active);
 
@@ -470,6 +531,16 @@ export default function GameCanvas() {
           >
             {stats.runStatus === "transcended" ? "TRANSCENDED" : "CONSUMED"}
           </div>
+          {bestResult.isNewBest && (
+            <div className="rounded-full bg-amber-300/15 px-4 py-1 font-mono text-[11px] uppercase tracking-[0.3em] text-amber-200 ring-1 ring-amber-300/40">
+              new best
+            </div>
+          )}
+          {!bestResult.isNewBest && bestResult.best && (
+            <div className="font-mono text-[10px] uppercase tracking-wider text-zinc-500">
+              best {bestResult.best.peakCaptured} · {formatDuration(bestResult.best.durationMs)}
+            </div>
+          )}
           <div className="grid grid-cols-3 gap-6 font-mono text-center">
             <div>
               <div className="text-2xl text-zinc-100">{stats.peakCaptured}</div>
@@ -505,6 +576,43 @@ export default function GameCanvas() {
           >
             Begin again →
           </button>
+        </div>
+      )}
+
+      {/* Mute toggle — small icon button next to back link. */}
+      <button
+        onClick={toggleMute}
+        aria-label={muted ? "Unmute" : "Mute"}
+        className="absolute z-30 inline-flex h-11 w-11 items-center justify-center rounded-full bg-black/45 text-zinc-200 backdrop-blur transition-colors hover:bg-black/65 active:bg-black/80"
+        style={{
+          top: "max(0.5rem, env(safe-area-inset-top))",
+          right: "calc(max(0.5rem, env(safe-area-inset-right)) + 3.25rem)",
+        }}
+      >
+        {muted ? (
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M11 5L6 9H2v6h4l5 4V5z" />
+            <line x1="22" y1="9" x2="16" y2="15" />
+            <line x1="16" y1="9" x2="22" y2="15" />
+          </svg>
+        ) : (
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M11 5L6 9H2v6h4l5 4V5z" />
+            <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+            <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+          </svg>
+        )}
+      </button>
+
+      {/* First-run tutorial — pulsing prompt, dismissed on first touch. */}
+      {showTutorial && stats.runStatus === "running" && (
+        <div className="pointer-events-none absolute inset-0 z-15 flex items-end justify-center pb-32 sm:pb-40">
+          <div className="animate-tutorial-pulse rounded-2xl border border-cyan-300/40 bg-black/40 px-6 py-4 text-center font-mono text-xs uppercase tracking-[0.2em] text-cyan-200 backdrop-blur-sm">
+            <div>drag anywhere to swim</div>
+            <div className="mt-1 text-[10px] tracking-[0.15em] text-zinc-400 normal-case">
+              tap prey when sensors lock on
+            </div>
+          </div>
         </div>
       )}
 

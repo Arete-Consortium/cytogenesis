@@ -440,10 +440,16 @@ function drawCore(ctx: CanvasRenderingContext2D, world: World, core: Body): void
   ctx.translate(x, y);
   ctx.rotate(cachedBellAngle);
 
-  // Outer halo — kept tight so it doesn't bloom across the screen
+  // Outer halo — gold-tinted while combo buff is active.
+  const comboActive = world.wallMs < world.comboActiveUntilMs;
   const halo = ctx.createRadialGradient(0, 0, rr * 0.6, 0, 0, rr * 2.4);
-  halo.addColorStop(0, "rgba(64, 220, 255, 0.28)");
-  halo.addColorStop(1, "rgba(64, 220, 255, 0)");
+  if (comboActive) {
+    halo.addColorStop(0, "rgba(255, 215, 100, 0.42)");
+    halo.addColorStop(1, "rgba(255, 215, 100, 0)");
+  } else {
+    halo.addColorStop(0, "rgba(64, 220, 255, 0.28)");
+    halo.addColorStop(1, "rgba(64, 220, 255, 0)");
+  }
   ctx.fillStyle = halo;
   ctx.beginPath();
   ctx.arc(0, 0, rr * 2.4, 0, Math.PI * 2);

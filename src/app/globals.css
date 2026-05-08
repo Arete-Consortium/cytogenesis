@@ -58,3 +58,9 @@ body {
   50%      { box-shadow: inset 0 0 140px 28px rgba(220, 38, 38, 0.55); }
 }
 .animate-vignette-pulse { animation: vignette-pulse 1.1s ease-in-out infinite; }
+
+@keyframes tutorial-pulse {
+  0%, 100% { opacity: 0.65; transform: scale(1); }
+  50%      { opacity: 1;    transform: scale(1.04); }
+}
+.animate-tutorial-pulse { animation: tutorial-pulse 2.2s ease-in-out infinite; }

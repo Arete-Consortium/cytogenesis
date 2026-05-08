@@ -68,8 +68,16 @@ export type WorldEvent =
   | "death"
   | "lockOn"
   | "telegraph"
+  | "combo"
   | `trait:${string}`
   | `biome:${number}`;
+
+/** Capture-combo tuning. */
+const COMBO_WINDOW_MS = 2000;
+const COMBO_THRESHOLD = 3;
+const COMBO_DURATION_MS = 3000;
+const COMBO_ACCEL_MUL = 1.4;
+const COMBO_RADIUS_BONUS = 8;
 
 /** Captured-count milestones that trigger a biome flourish. */
 const BIOME_MILESTONES = [20, 40, 60];
@@ -133,6 +141,10 @@ export class World {
   shakeIntensity: number;
   /** Per-tick events drained by the React layer (audio, toasts). */
   events: WorldEvent[];
+  /** Wallclock until which the capture-combo buff is active. */
+  comboActiveUntilMs: number;
+  /** Recent capture timestamps (wallMs) — sliding window for combo detection. */
+  private recentCaptures: number[];
   /** Trait IDs that were active on the previous capture, for first-acquisition toasts. */
   private prevTraitSet: Set<string>;
   /** Accumulator for sub-frame d3 sim ticks during slow-mo. */
@@ -176,6 +188,8 @@ export class World {
     this.stickInput = null;
     this.shakeIntensity = 0;
     this.events = [];
+    this.comboActiveUntilMs = 0;
+    this.recentCaptures = [];
     this.prevTraitSet = new Set();
     this.simAccum = 0;
     this.nextPredatorSpawnAt = PREDATOR_FIRST_SPAWN_MS;
@@ -320,10 +334,11 @@ export class World {
     if (t < 0.05) return;
     core.fx = null;
     core.fy = null;
-    const accel = t * 1.5;
+    const comboMul = this.wallMs < this.comboActiveUntilMs ? COMBO_ACCEL_MUL : 1;
+    const accel = t * 1.5 * comboMul;
     core.vx = (core.vx ?? 0) + ux * accel;
     core.vy = (core.vy ?? 0) + uy * accel;
-    const MAX_VEL = 9;
+    const MAX_VEL = 9 * comboMul;
     const sp = Math.hypot(core.vx ?? 0, core.vy ?? 0);
     if (sp > MAX_VEL) {
       core.vx = (core.vx ?? 0) * (MAX_VEL / sp);
@@ -350,18 +365,29 @@ export class World {
   }
 
   /**
-   * Lerp camera so the core sits near viewport center. Stays in screen
-   * pixels (not world units) — d3.zoom's transform shape. Skipped if
-   * viewport hasn't been set (tests).
+   * Camera follow with a velocity-proportional lead so the player can
+   * see what's ahead. At rest, target = viewport center. At top speed,
+   * target = ~LEAD_MAX world units ahead in the velocity direction.
+   * Lerp slightly slower (0.12) so the lead reads smoothly.
    */
   private updateCameraFollow(): void {
     if (this.viewportWidth === 0 || this.viewportHeight === 0) return;
     const core = this.entityBodies[0];
     if (!core) return;
-    const targetX = this.viewportWidth / 2 - (core.x ?? 0) * this.camera.k;
-    const targetY = this.viewportHeight / 2 - (core.y ?? 0) * this.camera.k;
-    // 0.18 ≈ ~150ms time-constant at 60fps. Smooth without rubber-banding.
-    const lerp = 0.18;
+    const vx = core.vx ?? 0;
+    const vy = core.vy ?? 0;
+    const sp = Math.hypot(vx, vy);
+    const LEAD_MAX = 80;
+    let leadX = 0;
+    let leadY = 0;
+    if (sp > 0.5) {
+      const t = Math.min(1, sp / 9); // 9 wu/tick is MAX_VEL
+      leadX = (vx / sp) * t * LEAD_MAX;
+      leadY = (vy / sp) * t * LEAD_MAX;
+    }
+    const targetX = this.viewportWidth / 2 - ((core.x ?? 0) + leadX) * this.camera.k;
+    const targetY = this.viewportHeight / 2 - ((core.y ?? 0) + leadY) * this.camera.k;
+    const lerp = 0.12;
     this.camera.x += (targetX - this.camera.x) * lerp;
     this.camera.y += (targetY - this.camera.y) * lerp;
   }
@@ -798,6 +824,19 @@ export class World {
     free.magnetized = false;
     this.peakCaptured = Math.max(this.peakCaptured, this.entityBodies.length);
     this.events.push("capture");
+    // Combo detection — sliding window of recent capture timestamps.
+    this.recentCaptures.push(this.wallMs);
+    this.recentCaptures = this.recentCaptures.filter(
+      (t) => this.wallMs - t <= COMBO_WINDOW_MS,
+    );
+    if (
+      this.recentCaptures.length >= COMBO_THRESHOLD &&
+      this.wallMs > this.comboActiveUntilMs
+    ) {
+      this.comboActiveUntilMs = this.wallMs + COMBO_DURATION_MS;
+      this.events.push("combo");
+      this.recentCaptures = [];
+    }
     // Biome milestones — emit on first crossing of each threshold so the
     // run has visible shape between start and transcend.
     for (const m of BIOME_MILESTONES) {
@@ -841,7 +880,8 @@ export class World {
       if (c.type !== "core" && c.type !== "mouth") continue;
       const cx = c.x ?? 0;
       const cy = c.y ?? 0;
-      const bonus = this.traits.captureRadiusBonus;
+      const comboBonus = this.wallMs < this.comboActiveUntilMs ? COMBO_RADIUS_BONUS : 0;
+      const bonus = this.traits.captureRadiusBonus + comboBonus;
       const searchR = c.radius + maxFreeR + CAPTURE_PAD + bonus;
       rangeQuery(qt, cx, cy, searchR, (free) => {
         // The body might have been captured this same sweep; skip.
