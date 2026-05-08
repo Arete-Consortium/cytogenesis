@@ -10,6 +10,7 @@ import {
   drawEnvCA,
   drawPredators,
   drawSparkles,
+  drawAmbientPlankton,
   applyCamera,
 } from "@/game/render";
 import type { TraitState } from "@/game/traits";
@@ -258,7 +259,8 @@ export default function GameCanvas() {
       world.tick(dt);
       world.captureNearby();
 
-      drawBackground(ctx, width, height);
+      drawBackground(ctx, width, height, world.tickN);
+      drawAmbientPlankton(ctx, width, height, world.tickN);
       ctx.save();
       applyCamera(ctx, world, dpr);
       drawEnvCA(ctx, world);

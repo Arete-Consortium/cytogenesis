@@ -1,12 +1,86 @@
 import type { World } from "./world";
-import type { Body } from "./types";
+import type { Body, NodeTypeId } from "./types";
 import { NODE_COLOR } from "@/data/nodeTypes";
 
-/* ─── Env CA underlay ─────────────────────────────────────────────── */
+/* ─── Background: ocean depth + light shafts ─────────────────────── */
+
+/**
+ * Vertical depth gradient + two slow-moving light shafts to read as
+ * "sunlight from the surface filtering down". The eye reads vertical
+ * value-difference as depth.
+ */
+export function drawBackground(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  tickN = 0,
+): void {
+  const depth = ctx.createLinearGradient(0, 0, 0, height);
+  depth.addColorStop(0, "#0c2440");
+  depth.addColorStop(0.45, "#061a30");
+  depth.addColorStop(1, "#020812");
+  ctx.fillStyle = depth;
+  ctx.fillRect(0, 0, width, height);
+
+  // Two soft shafts of light, drifting slowly.
+  const shaftCount = 2;
+  for (let i = 0; i < shaftCount; i++) {
+    const seed = i * 137.5;
+    const drift = (tickN * 0.18 + seed) % (width + 200);
+    const x = drift - 100;
+    const w = 220;
+    const grad = ctx.createLinearGradient(x, 0, x + w * 0.6, height);
+    grad.addColorStop(0, "rgba(180, 220, 255, 0.06)");
+    grad.addColorStop(0.6, "rgba(180, 220, 255, 0.02)");
+    grad.addColorStop(1, "rgba(180, 220, 255, 0)");
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x + w, 0);
+    ctx.lineTo(x + w * 0.65, height);
+    ctx.lineTo(x - w * 0.35, height);
+    ctx.closePath();
+    ctx.fill();
+  }
+}
+
+/**
+ * Ambient drifting plankton — small motes in viewport space (NOT world
+ * space) so they decorate the camera, not the arena. Stateless: position
+ * derived from index + tickN so we don't carry a particle array.
+ */
+export function drawAmbientPlankton(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  tickN: number,
+): void {
+  const count = 90;
+  for (let i = 0; i < count; i++) {
+    const seed = i * 9301.7 + 49297;
+    const sx = Math.abs(Math.sin(seed)) * width;
+    const speed = 0.05 + (Math.abs(Math.cos(seed)) * 0.18);
+    const sy = ((Math.abs(Math.cos(seed * 0.5)) * height + tickN * speed) %
+      (height + 20)) - 10;
+    const flick = 0.18 + 0.12 * Math.sin(seed * 7 + tickN * 0.04);
+    const r = 0.7 + (i % 4) * 0.4;
+    ctx.fillStyle = `rgba(190, 230, 255, ${flick.toFixed(3)})`;
+    ctx.beginPath();
+    ctx.arc(sx, sy, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+/* ─── Env CA underlay (bioluminescent bloom) ─────────────────────── */
 
 let caBuffer: HTMLCanvasElement | null = null;
 let caBufferLastSteps = -1;
 
+/**
+ * Conway grid rendered as a soft cyan-green bloom. Each live cell
+ * writes a brighter alpha; image-smoothing during drawImage blurs the
+ * pixel-grid edges into glowing patches that read as plankton bloom.
+ */
 export function drawEnvCA(ctx: CanvasRenderingContext2D, world: World): void {
   const ca = world.envCA;
   if (!caBuffer) {
@@ -28,10 +102,11 @@ export function drawEnvCA(ctx: CanvasRenderingContext2D, world: World): void {
     for (let i = 0; i < ca.cells.length; i++) {
       const k = i * 4;
       if (ca.cells[i]) {
-        data[k] = 32;
-        data[k + 1] = 96;
-        data[k + 2] = 138;
-        data[k + 3] = 70;
+        // Soft sea-glass cyan
+        data[k] = 96;
+        data[k + 1] = 220;
+        data[k + 2] = 200;
+        data[k + 3] = 96;
       } else {
         data[k + 3] = 0;
       }
@@ -42,33 +117,16 @@ export function drawEnvCA(ctx: CanvasRenderingContext2D, world: World): void {
   const a = ca.arenaHalf;
   const prev = ctx.imageSmoothingEnabled;
   ctx.imageSmoothingEnabled = true;
+  // imageSmoothingQuality is widely supported; high gives the bloom feel.
+  const prevQ = ctx.imageSmoothingQuality;
+  ctx.imageSmoothingQuality = "high";
   ctx.drawImage(caBuffer, -a, -a, a * 2, a * 2);
   ctx.imageSmoothingEnabled = prev;
+  ctx.imageSmoothingQuality = prevQ;
 }
 
-/* ─── Background ─────────────────────────────────────────────────── */
+/* ─── Bonds (curved tissue) ──────────────────────────────────────── */
 
-export function drawBackground(
-  ctx: CanvasRenderingContext2D,
-  width: number,
-  height: number,
-): void {
-  const cx = width / 2;
-  const cy = height / 2;
-  const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(width, height) / 1.0);
-  grad.addColorStop(0, "#0c1422");
-  grad.addColorStop(1, "#06080d");
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, width, height);
-}
-
-/* ─── Bonds (curved) ─────────────────────────────────────────────── */
-
-/**
- * Bonds drawn as gentle parabolic arcs — quadratic bezier with a
- * perpendicular sag at the midpoint. Reads as "tissue between
- * organelles" instead of a wireframe.
- */
 export function drawBonds(ctx: CanvasRenderingContext2D, world: World): void {
   if (world.bonds.length === 0) return;
   ctx.lineCap = "round";
@@ -80,19 +138,17 @@ export function drawBonds(ctx: CanvasRenderingContext2D, world: World): void {
     const sy = s.y ?? 0;
     const tx = t.x ?? 0;
     const ty = t.y ?? 0;
-
     const dx = tx - sx;
     const dy = ty - sy;
     const len = Math.hypot(dx, dy) || 1;
     const sag = Math.min(len * 0.12, 18);
     const mx = (sx + tx) / 2 + (-dy / len) * sag;
     const my = (sy + ty) / 2 + (dx / len) * sag;
-
     const grad = ctx.createLinearGradient(sx, sy, tx, ty);
     grad.addColorStop(0, NODE_COLOR[s.type]);
     grad.addColorStop(1, NODE_COLOR[t.type]);
     ctx.strokeStyle = grad;
-    ctx.globalAlpha = 0.35 + 0.35 * bond.strength;
+    ctx.globalAlpha = 0.32 + 0.32 * bond.strength;
     ctx.lineWidth = 2.5 + bond.strength;
     ctx.beginPath();
     ctx.moveTo(sx, sy);
@@ -102,128 +158,245 @@ export function drawBonds(ctx: CanvasRenderingContext2D, world: World): void {
   ctx.globalAlpha = 1;
 }
 
-/* ─── Bodies ─────────────────────────────────────────────────────── */
+/* ─── Per-type creature shapes ───────────────────────────────────── */
 
-/**
- * Soft glow + core circle. Used for free cells and non-core captured
- * organelles. The core itself goes through drawCore for the jellyfish
- * treatment.
- */
-function drawBodyGlow(
+const BODY_HALO = (
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  r: number,
+  fill: string,
+  alpha: number,
+) => {
+  const halo = ctx.createRadialGradient(x, y, r * 0.3, x, y, r * 2.2);
+  halo.addColorStop(0, fill);
+  halo.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = halo;
+  ctx.beginPath();
+  ctx.arc(x, y, r * 2.2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+};
+
+function drawPropulsion(ctx: CanvasRenderingContext2D, b: Body, t: number) {
+  const x = b.x ?? 0;
+  const y = b.y ?? 0;
+  const r = b.radius;
+  const vx = b.vx ?? 0;
+  const vy = b.vy ?? 0;
+  const sp = Math.hypot(vx, vy) || 1;
+  const dx = -vx / sp;
+  const dy = -vy / sp;
+  const fill = NODE_COLOR.propulsion;
+  // Tail (wagging sin wave behind direction of motion)
+  ctx.strokeStyle = fill;
+  ctx.lineWidth = 1.6;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(x, y);
+  // Perpendicular axis for the wag
+  const px = -dy;
+  const py = dx;
+  for (let s = 1; s <= 10; s++) {
+    const f = s / 10;
+    const wag = Math.sin(t * 0.18 + f * 6) * 4 * f;
+    const tx = x + dx * r * 3.4 * f + px * wag;
+    const ty = y + dy * r * 3.4 * f + py * wag;
+    ctx.lineTo(tx, ty);
+  }
+  ctx.stroke();
+  // Body (round head)
+  ctx.fillStyle = fill;
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fill();
+  // Tiny eye
+  ctx.fillStyle = "rgba(0,0,0,0.5)";
+  ctx.beginPath();
+  ctx.arc(x - dx * r * 0.4, y - dy * r * 0.4, r * 0.18, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawSensor(ctx: CanvasRenderingContext2D, b: Body) {
+  const x = b.x ?? 0;
+  const y = b.y ?? 0;
+  const r = b.radius;
+  ctx.fillStyle = NODE_COLOR.sensor;
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fill();
+  // Pupil
+  ctx.fillStyle = "#1f0e3a";
+  ctx.beginPath();
+  ctx.arc(x, y, r * 0.55, 0, Math.PI * 2);
+  ctx.fill();
+  // Highlight
+  ctx.fillStyle = "rgba(255,255,255,0.7)";
+  ctx.beginPath();
+  ctx.arc(x - r * 0.2, y - r * 0.2, r * 0.18, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawMembrane(ctx: CanvasRenderingContext2D, b: Body) {
+  const x = b.x ?? 0;
+  const y = b.y ?? 0;
+  const r = b.radius;
+  ctx.fillStyle = NODE_COLOR.membrane;
+  ctx.beginPath();
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2 - Math.PI / 6;
+    const px = x + Math.cos(a) * r;
+    const py = y + Math.sin(a) * r;
+    if (i === 0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  }
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = "rgba(255,255,255,0.35)";
+  ctx.lineWidth = 1;
+  ctx.stroke();
+}
+
+function drawMouth(ctx: CanvasRenderingContext2D, b: Body, t: number) {
+  const x = b.x ?? 0;
+  const y = b.y ?? 0;
+  const r = b.radius;
+  const open = 0.35 + Math.sin(t * 0.07) * 0.15;
+  ctx.fillStyle = NODE_COLOR.mouth;
+  ctx.beginPath();
+  ctx.arc(x, y, r, open, Math.PI * 2 - open);
+  ctx.lineTo(x, y);
+  ctx.closePath();
+  ctx.fill();
+}
+
+function drawStinger(ctx: CanvasRenderingContext2D, b: Body) {
+  const x = b.x ?? 0;
+  const y = b.y ?? 0;
+  const r = b.radius;
+  ctx.fillStyle = NODE_COLOR.stinger;
+  ctx.beginPath();
+  const points = 6;
+  for (let i = 0; i < points * 2; i++) {
+    const a = (i / (points * 2)) * Math.PI * 2;
+    const radius = i % 2 === 0 ? r : r * 0.5;
+    const px = x + Math.cos(a) * radius;
+    const py = y + Math.sin(a) * radius;
+    if (i === 0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  }
+  ctx.closePath();
+  ctx.fill();
+}
+
+function drawChloroplast(ctx: CanvasRenderingContext2D, b: Body) {
+  const x = b.x ?? 0;
+  const y = b.y ?? 0;
+  const r = b.radius;
+  ctx.fillStyle = NODE_COLOR.chloroplast;
+  ctx.beginPath();
+  ctx.ellipse(x, y, r * 1.25, r * 0.7, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "rgba(0, 80, 60, 0.4)";
+  ctx.beginPath();
+  ctx.ellipse(x, y, r * 0.7, r * 0.25, 0, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawMitochondrion(ctx: CanvasRenderingContext2D, b: Body) {
+  const x = b.x ?? 0;
+  const y = b.y ?? 0;
+  const r = b.radius;
+  ctx.fillStyle = NODE_COLOR.mitochondrion;
+  ctx.beginPath();
+  ctx.ellipse(x, y, r * 1.3, r * 0.7, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(120, 80, 0, 0.5)";
+  ctx.lineWidth = 1;
+  for (let i = -1; i <= 1; i++) {
+    ctx.beginPath();
+    ctx.moveTo(x + i * r * 0.4, y - r * 0.45);
+    ctx.lineTo(x + i * r * 0.4, y + r * 0.45);
+    ctx.stroke();
+  }
+}
+
+function drawSpore(ctx: CanvasRenderingContext2D, b: Body) {
+  const x = b.x ?? 0;
+  const y = b.y ?? 0;
+  const r = b.radius;
+  ctx.fillStyle = NODE_COLOR.spore;
+  for (let i = 0; i < 5; i++) {
+    const a = (i / 5) * Math.PI * 2;
+    const px = x + Math.cos(a) * r * 0.55;
+    const py = y + Math.sin(a) * r * 0.55;
+    ctx.beginPath();
+    ctx.arc(px, py, r * 0.32, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.beginPath();
+  ctx.arc(x, y, r * 0.28, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+const SHAPE_DRAWERS: Record<
+  NodeTypeId,
+  (ctx: CanvasRenderingContext2D, b: Body, t: number) => void
+> = {
+  core: () => {
+    /* core handled separately by drawCore */
+  },
+  propulsion: drawPropulsion,
+  sensor: (ctx, b) => drawSensor(ctx, b),
+  membrane: (ctx, b) => drawMembrane(ctx, b),
+  mouth: drawMouth,
+  stinger: (ctx, b) => drawStinger(ctx, b),
+  chloroplast: (ctx, b) => drawChloroplast(ctx, b),
+  mitochondrion: (ctx, b) => drawMitochondrion(ctx, b),
+  spore: (ctx, b) => drawSpore(ctx, b),
+};
+
+function drawCell(
   ctx: CanvasRenderingContext2D,
   b: Body,
+  t: number,
   hovered: boolean,
   dragging: boolean,
 ): void {
   const x = b.x ?? 0;
   const y = b.y ?? 0;
   const r = b.radius;
-  const fill = NODE_COLOR[b.type];
-
-  // Halo
-  ctx.globalAlpha = b.kind === "captured" ? 0.55 : 0.35;
-  const halo = ctx.createRadialGradient(x, y, r * 0.3, x, y, r * 2.4);
-  halo.addColorStop(0, fill);
-  halo.addColorStop(1, "rgba(0,0,0,0)");
-  ctx.fillStyle = halo;
-  ctx.beginPath();
-  ctx.arc(x, y, r * 2.4, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.globalAlpha = 1;
-
-  // Body
-  ctx.beginPath();
-  ctx.arc(x, y, r, 0, Math.PI * 2);
-  ctx.fillStyle = fill;
-  ctx.fill();
-
+  const haloAlpha = b.kind === "captured" ? 0.55 : 0.32;
+  BODY_HALO(ctx, x, y, r, NODE_COLOR[b.type], haloAlpha);
+  SHAPE_DRAWERS[b.type](ctx, b, t);
   if (dragging) {
-    ctx.lineWidth = 2.5;
+    ctx.lineWidth = 2.2;
     ctx.strokeStyle = "#f4f4f5";
+    ctx.beginPath();
+    ctx.arc(x, y, r * 1.15, 0, Math.PI * 2);
     ctx.stroke();
   } else if (hovered) {
-    ctx.lineWidth = 1.5;
-    ctx.strokeStyle = "rgba(244, 244, 245, 0.6)";
-    ctx.stroke();
-  } else {
-    ctx.lineWidth = 0.8;
-    ctx.strokeStyle = "rgba(0, 0, 0, 0.35)";
-    ctx.stroke();
-  }
-}
-
-/**
- * Jellyfish bell + tentacles for the core. Visual radius is 1.4× the
- * physics radius — the bell looks bigger than its hitbox, which sells
- * the "soft tissue" reading. Tentacles trail in world +y so they hang
- * naturally regardless of motion direction.
- */
-function drawCore(ctx: CanvasRenderingContext2D, world: World, core: Body): void {
-  const x = core.x ?? 0;
-  const y = core.y ?? 0;
-  const t = world.tickN;
-  const breath = 1 + Math.sin(t * 0.04) * 0.06;
-  const rr = core.radius * 1.4 * breath;
-
-  // Outermost glow
-  const halo = ctx.createRadialGradient(x, y, rr * 0.6, x, y, rr * 3.2);
-  halo.addColorStop(0, "rgba(34, 211, 238, 0.42)");
-  halo.addColorStop(1, "rgba(34, 211, 238, 0)");
-  ctx.fillStyle = halo;
-  ctx.beginPath();
-  ctx.arc(x, y, rr * 3.2, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Bell body — top-down gradient gives the dome a sense of depth
-  const bell = ctx.createRadialGradient(x, y - rr * 0.35, rr * 0.1, x, y, rr);
-  bell.addColorStop(0, "rgba(220, 252, 255, 0.95)");
-  bell.addColorStop(0.55, "rgba(34, 211, 238, 0.75)");
-  bell.addColorStop(1, "rgba(8, 145, 178, 0.35)");
-  ctx.fillStyle = bell;
-  ctx.beginPath();
-  ctx.arc(x, y, rr, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Faint white rim
-  ctx.lineWidth = 1.2;
-  ctx.strokeStyle = "rgba(220, 252, 255, 0.5)";
-  ctx.stroke();
-
-  // Tentacles — three sinusoidal strands hanging in world +y
-  ctx.strokeStyle = "rgba(34, 211, 238, 0.55)";
-  ctx.lineWidth = 1.6;
-  ctx.lineCap = "round";
-  for (let strand = -1; strand <= 1; strand++) {
+    ctx.lineWidth = 1.4;
+    ctx.strokeStyle = "rgba(244, 244, 245, 0.55)";
     ctx.beginPath();
-    const startX = x + strand * (rr * 0.45);
-    const startY = y + rr * 0.55;
-    ctx.moveTo(startX, startY);
-    const length = rr * 2.3;
-    const segments = 14;
-    for (let s = 1; s <= segments; s++) {
-      const f = s / segments;
-      const phase = t * 0.05 + strand * 0.7 + f * 4;
-      const wave = Math.sin(phase) * 5 * f;
-      ctx.lineTo(startX + wave, startY + length * f);
-    }
+    ctx.arc(x, y, r * 1.15, 0, Math.PI * 2);
     ctx.stroke();
   }
 }
 
-/**
- * Wake — a fading line strung through the core's recent positions.
- * Adds motion read + reinforces the jellyfish-trailing-organism feel.
- */
+/* ─── Jellyfish core ─────────────────────────────────────────────── */
+
 function drawCoreTrail(ctx: CanvasRenderingContext2D, world: World): void {
   const trail = world.coreTrail;
   if (trail.length < 4) return;
   ctx.lineCap = "round";
-  ctx.lineWidth = 3;
+  ctx.lineWidth = 4;
   for (let i = 1; i < trail.length; i++) {
     const a = trail[i - 1];
     const b = trail[i];
-    const alpha = (i / trail.length) * 0.35;
-    ctx.strokeStyle = `rgba(34, 211, 238, ${alpha})`;
+    const alpha = (i / trail.length) * 0.28;
+    ctx.strokeStyle = `rgba(64, 220, 255, ${alpha})`;
     ctx.beginPath();
     ctx.moveTo(a.x, a.y);
     ctx.lineTo(b.x, b.y);
@@ -231,10 +404,75 @@ function drawCoreTrail(ctx: CanvasRenderingContext2D, world: World): void {
   }
 }
 
-/**
- * Render every body. Caller has applied the camera transform; coords
- * here are world-space.
- */
+function drawCore(ctx: CanvasRenderingContext2D, world: World, core: Body): void {
+  const x = core.x ?? 0;
+  const y = core.y ?? 0;
+  const t = world.tickN;
+  const breath = 1 + Math.sin(t * 0.04) * 0.06;
+  const rr = core.radius * 1.55 * breath;
+
+  // Outer halo
+  const halo = ctx.createRadialGradient(x, y, rr * 0.5, x, y, rr * 3.6);
+  halo.addColorStop(0, "rgba(64, 220, 255, 0.45)");
+  halo.addColorStop(1, "rgba(64, 220, 255, 0)");
+  ctx.fillStyle = halo;
+  ctx.beginPath();
+  ctx.arc(x, y, rr * 3.6, 0, Math.PI * 2);
+  ctx.fill();
+
+  // 5 tentacles (drawn before bell so the bell occludes their roots)
+  ctx.lineCap = "round";
+  for (let strand = -2; strand <= 2; strand++) {
+    const startX = x + strand * (rr * 0.32);
+    const startY = y + rr * 0.4;
+    const length = rr * 4.0;
+    const segments = 22;
+    ctx.beginPath();
+    ctx.moveTo(startX, startY);
+    for (let s = 1; s <= segments; s++) {
+      const f = s / segments;
+      const phase = t * 0.045 + strand * 0.55 + f * 5;
+      const wave = Math.sin(phase) * 7 * f;
+      ctx.lineTo(startX + wave, startY + length * f);
+    }
+    const grad = ctx.createLinearGradient(startX, startY, startX, startY + length);
+    grad.addColorStop(0, "rgba(96, 240, 255, 0.7)");
+    grad.addColorStop(1, "rgba(64, 220, 255, 0)");
+    ctx.strokeStyle = grad;
+    ctx.lineWidth = 1.8 - Math.abs(strand) * 0.25;
+    ctx.stroke();
+  }
+
+  // Bell (translucent dome)
+  const bell = ctx.createRadialGradient(x, y - rr * 0.35, rr * 0.1, x, y, rr);
+  bell.addColorStop(0, "rgba(220, 252, 255, 0.92)");
+  bell.addColorStop(0.55, "rgba(64, 220, 255, 0.62)");
+  bell.addColorStop(1, "rgba(8, 145, 178, 0.22)");
+  ctx.fillStyle = bell;
+  ctx.beginPath();
+  ctx.arc(x, y, rr, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Rim
+  ctx.strokeStyle = "rgba(220, 252, 255, 0.45)";
+  ctx.lineWidth = 1.1;
+  ctx.stroke();
+
+  // Internal organs (3 small dots inside the bell)
+  ctx.fillStyle = "rgba(34, 211, 238, 0.55)";
+  for (let i = -1; i <= 1; i++) {
+    ctx.beginPath();
+    ctx.arc(x + i * rr * 0.28, y - rr * 0.05, rr * 0.09, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Top highlight
+  ctx.fillStyle = "rgba(255, 255, 255, 0.28)";
+  ctx.beginPath();
+  ctx.ellipse(x - rr * 0.25, y - rr * 0.5, rr * 0.4, rr * 0.13, -0.2, 0, Math.PI * 2);
+  ctx.fill();
+}
+
 export function drawBodies(
   ctx: CanvasRenderingContext2D,
   world: World,
@@ -242,75 +480,102 @@ export function drawBodies(
   dragging: string | null,
 ): void {
   drawCoreTrail(ctx, world);
-  // Free + organelle bodies first (under the bell) — except the core,
-  // which gets drawn last so its bell sits on top of everything.
   const core = world.entityBodies[0];
   for (const b of world.bodies) {
     if (b === core) continue;
-    drawBodyGlow(ctx, b, b.id === hovered, b.id === dragging);
+    drawCell(ctx, b, world.tickN, b.id === hovered, b.id === dragging);
   }
   if (core) drawCore(ctx, world, core);
 }
 
-/* ─── Predators ──────────────────────────────────────────────────── */
+/* ─── Predator (anglerfish) ──────────────────────────────────────── */
 
-/**
- * Spiked star, slowly rotating, with red danger halo. Recoiling
- * predators dim noticeably so the player gets a clear "you have a
- * moment" beat after a hit.
- */
 export function drawPredators(ctx: CanvasRenderingContext2D, world: World): void {
   if (world.predators.length === 0) return;
   const t = world.tickN;
   for (const p of world.predators) {
     const x = p.x ?? 0;
     const y = p.y ?? 0;
-    const r = p.radius;
+    const r = p.radius * 1.25;
     const recoiling = p.recoilUntil != null && p.recoilUntil > world.tickN;
-    const spin = t * 0.018 + (x + y) * 0.001;
+    const vx = p.vx ?? 0;
+    const vy = p.vy ?? 0;
+    const angle = Math.atan2(vy, vx) || 0;
 
-    // Halo
-    ctx.globalAlpha = recoiling ? 0.35 : 1;
-    const halo = ctx.createRadialGradient(x, y, r, x, y, r * 2.6);
-    halo.addColorStop(0, "rgba(239, 68, 68, 0.5)");
-    halo.addColorStop(1, "rgba(239, 68, 68, 0)");
+    // Danger halo
+    ctx.globalAlpha = recoiling ? 0.4 : 1;
+    const halo = ctx.createRadialGradient(x, y, r * 0.6, x, y, r * 2.6);
+    halo.addColorStop(0, "rgba(220, 38, 38, 0.42)");
+    halo.addColorStop(1, "rgba(220, 38, 38, 0)");
     ctx.fillStyle = halo;
     ctx.beginPath();
     ctx.arc(x, y, r * 2.6, 0, Math.PI * 2);
     ctx.fill();
 
-    // Spiked star (8 points)
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(angle);
+
+    // Body — dark teardrop pointing forward
+    ctx.fillStyle = recoiling ? "#1c0608" : "#3a0e10";
     ctx.beginPath();
-    const points = 8;
-    for (let i = 0; i < points * 2; i++) {
-      const a = (i / (points * 2)) * Math.PI * 2 + spin;
-      const radius = i % 2 === 0 ? r : r * 0.55;
-      const px = x + Math.cos(a) * radius;
-      const py = y + Math.sin(a) * radius;
-      if (i === 0) ctx.moveTo(px, py);
-      else ctx.lineTo(px, py);
-    }
-    ctx.closePath();
-    ctx.fillStyle = recoiling ? "#7f1d1d" : "#dc2626";
+    ctx.ellipse(0, 0, r, r * 0.78, 0, 0, Math.PI * 2);
     ctx.fill();
-    ctx.lineWidth = 1.4;
-    ctx.strokeStyle = "rgba(254, 202, 202, 0.6)";
+    ctx.strokeStyle = "rgba(254, 202, 202, 0.45)";
+    ctx.lineWidth = 1.2;
     ctx.stroke();
 
+    // Tooth row (3 small triangles at the front edge)
+    ctx.fillStyle = "rgba(255, 240, 240, 0.85)";
+    for (let i = -1; i <= 1; i++) {
+      const ty = i * r * 0.32;
+      ctx.beginPath();
+      ctx.moveTo(r * 0.55, ty);
+      ctx.lineTo(r * 0.92, ty - r * 0.1);
+      ctx.lineTo(r * 0.92, ty + r * 0.1);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    // Eye dot
+    ctx.fillStyle = "rgba(255, 230, 230, 0.85)";
+    ctx.beginPath();
+    ctx.arc(r * 0.25, -r * 0.2, r * 0.1, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Lure: thin line + glowing red dot dangling in front
+    const lurePhase = t * 0.05 + (x + y) * 0.001;
+    const lx = r * 1.45 + Math.sin(lurePhase) * 2.5;
+    const ly = -r * 0.55 + Math.cos(lurePhase) * 2.5;
+    ctx.strokeStyle = "rgba(120, 30, 30, 0.7)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, -r * 0.55);
+    ctx.quadraticCurveTo(r * 0.7, -r * 0.85, lx, ly);
+    ctx.stroke();
+    const lureGlow = ctx.createRadialGradient(lx, ly, 0, lx, ly, r * 0.65);
+    lureGlow.addColorStop(0, "rgba(255, 120, 120, 0.95)");
+    lureGlow.addColorStop(1, "rgba(255, 80, 80, 0)");
+    ctx.fillStyle = lureGlow;
+    ctx.beginPath();
+    ctx.arc(lx, ly, r * 0.65, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
     ctx.globalAlpha = 1;
   }
 }
 
-/* ─── Sparkles (capture flashes + hit shocks) ────────────────────── */
+/* ─── Sparkles ───────────────────────────────────────────────────── */
 
 export function drawSparkles(ctx: CanvasRenderingContext2D, world: World): void {
   if (world.sparkles.length === 0) return;
   for (const s of world.sparkles) {
-    const f = s.age / s.max; // 0..1
-    const alpha = (1 - f) * 0.8;
+    const f = s.age / s.max;
+    const alpha = (1 - f) * 0.85;
     const radius = 6 + f * 36;
-    ctx.strokeStyle = `${s.hue} ${alpha})`;
-    ctx.lineWidth = 2 * (1 - f) + 0.5;
+    ctx.strokeStyle = `${s.hue} ${alpha.toFixed(3)})`;
+    ctx.lineWidth = 2.2 * (1 - f) + 0.5;
     ctx.beginPath();
     ctx.arc(s.x, s.y, radius, 0, Math.PI * 2);
     ctx.stroke();
@@ -319,10 +584,6 @@ export function drawSparkles(ctx: CanvasRenderingContext2D, world: World): void 
 
 /* ─── Camera ─────────────────────────────────────────────────────── */
 
-/**
- * Apply the world's camera transform. The caller must save() before
- * and restore() after.
- */
 export function applyCamera(
   ctx: CanvasRenderingContext2D,
   world: World,
