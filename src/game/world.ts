@@ -33,8 +33,14 @@ const CAPTURE_PAD = 2;
 const MAX_FREE_SPEED = 1.1;
 /** Per-tick random jitter applied to velocity (Brownian-flavored drift). */
 const JITTER = 0.05;
-/** Captured-node count that ends the run as a transcend (win). */
+/** Total absorbed count that ends the run as a transcend (win). */
 const TRANSCEND_AT = 80;
+/** Evolution-stage thresholds — index = stage, value = totalAbsorbed required. */
+export const STAGE_THRESHOLDS = [0, 6, 16, 32, 56, 80];
+export const MAX_STAGE = STAGE_THRESHOLDS.length - 1;
+/** Damage per predator hit (subtracted from totalAbsorbed). */
+const HIT_DAMAGE_SKIRMISHER = 3;
+const HIT_DAMAGE_BRUTE = 7;
 /** Predator config — base values; variant-specific values applied at spawn. */
 const PREDATOR_RADIUS_SKIRMISHER = 11;
 const PREDATOR_RADIUS_BRUTE = 20;
@@ -71,7 +77,9 @@ export type WorldEvent =
   | "combo"
   | "killPred"
   | `trait:${string}`
-  | `biome:${number}`;
+  | `biome:${number}`
+  | `evolve:${number}`
+  | `devolve:${number}`;
 
 /** Capture-combo tuning. */
 const COMBO_WINDOW_MS = 2000;
@@ -82,6 +90,15 @@ const COMBO_RADIUS_BONUS = 8;
 
 /** Captured-count milestones that trigger a biome flourish. */
 const BIOME_MILESTONES = [20, 40, 60];
+
+/** Stage at which the given totalAbsorbed currently sits. */
+export function computeStage(totalAbsorbed: number): number {
+  let stage = 0;
+  for (let i = 1; i < STAGE_THRESHOLDS.length; i++) {
+    if (totalAbsorbed >= STAGE_THRESHOLDS[i]) stage = i;
+  }
+  return stage;
+}
 
 export interface WorldConfig {
   /** Number of free cells to scatter at start. Default 200. */
@@ -99,11 +116,25 @@ export interface WorldConfig {
  * manually so we can scale to hundreds without melting the sim.
  */
 export class World {
-  /** Captured nodes — in d3.forceSimulation. */
+  /**
+   * Entity bodies. Always exactly one entry (the core) — captures no
+   * longer extend the graph. Kept as an array for backward-compatible
+   * d3.forceSimulation node binding + render iteration.
+   */
   entityBodies: Body[];
   /** Free-floating cells — manual integrator. */
   freeBodies: Body[];
+  /** Always empty under the absorb-counter model; kept to satisfy d3.forceLink. */
   bonds: Bond[];
+  /**
+   * Per-NodeTypeId absorbed counts. Drives both visual evolution and
+   * the trait engine.
+   */
+  absorbed: Record<NodeTypeId, number>;
+  /** Sum of absorbed counts — drives evolution stage + run win/loss. */
+  totalAbsorbed: number;
+  /** 0..MAX_STAGE. Crossings emit 'evolve' / 'devolve' events. */
+  evolutionStage: number;
   sim: d3.Simulation<Body, Bond>;
   camera: Camera;
   tickN: number;
@@ -177,13 +208,26 @@ export class World {
 
     this.bonds = [];
     this.tickN = 0;
+    this.absorbed = {
+      core: 1,
+      propulsion: 0,
+      sensor: 0,
+      membrane: 0,
+      mouth: 0,
+      stinger: 0,
+      chloroplast: 0,
+      mitochondrion: 0,
+      spore: 0,
+    };
+    this.totalAbsorbed = 0;
+    this.evolutionStage = 0;
     this.traits = emptyTraitState();
     this.lockOnReadyAt = 0;
     this.predators = [];
     this.runStatus = "running";
     this.runStartedAtMs = 0;
     this.runEndedAtMs = null;
-    this.peakCaptured = 1;
+    this.peakCaptured = 0;
     this.wallMs = 0;
     this.paused = false;
     this.biomeStage = 0;
@@ -600,29 +644,17 @@ export class World {
       if (!hit) continue;
 
       const isBrute = p.variant === "brute";
-      const isCore = hit === this.entityBodies[0];
-      if (isCore) {
-        if (this.entityBodies.length === 1) {
-          this.runStatus = "dead";
-          this.runEndedAtMs = this.wallMs;
-          this.addShake(isBrute ? 28 : 20);
-          this.events.push("death");
-          return;
-        }
-        this.addShake(isBrute ? 9 : 5);
-        this.events.push("hit");
-      } else {
-        this.pruneFromGraph(hit);
-        this.addShake(isBrute ? 14 : 8);
-        this.events.push("hit");
-      }
+      const damage = isBrute ? HIT_DAMAGE_BRUTE : HIT_DAMAGE_SKIRMISHER;
+      this.damageAbsorbed(damage);
+      this.addShake(isBrute ? 14 : 8);
+      this.events.push("hit");
+
+      if (this.runStatus === "dead") return; // damageAbsorbed killed us
 
       this.emitSparkle(hit.x ?? 0, hit.y ?? 0, "rgba(248, 113, 113,");
 
-      // Toxic bell — every captured stinger deals counter-damage on
-      // contact. Predators die when their health hits 0. Mutual hit
-      // (you still paid the leaf above).
-      const stingers = this.countCapturedType("stinger");
+      // Toxic bell — stinger absorbed counts as counter-damage.
+      const stingers = this.absorbed.stinger ?? 0;
       if (stingers > 0 && p.health != null) {
         p.health -= stingers;
         if (p.health <= 0) {
@@ -641,48 +673,56 @@ export class World {
   }
 
   /**
-   * Remove `target` from the entity graph and drop it back into the
-   * free pool. Cascade: any captured nodes whose only path to the core
-   * went through `target` are also released — keeps the entity always
-   * connected.
+   * Take damage. Drains absorbed counts (random non-zero types first),
+   * recomputes the stage, emits devolve / death events as needed.
+   * Replaces the legacy pruneFromGraph in the absorb-counter model.
    */
-  pruneFromGraph(target: Body): void {
-    if (this.entityBodies.length === 0) return;
-    if (target === this.entityBodies[0]) return;
-
-    const removeBondsTouching = (id: string) => {
-      this.bonds = this.bonds.filter((b) => {
-        const sId = typeof b.source === "string" ? b.source : (b.source as Body).id;
-        const tId = typeof b.target === "string" ? b.target : (b.target as Body).id;
-        return sId !== id && tId !== id;
-      });
-    };
-    const removeFromEntity = (b: Body) => {
-      const i = this.entityBodies.indexOf(b);
-      if (i >= 0) this.entityBodies.splice(i, 1);
-      b.kind = "free";
-      b.magnetized = false;
-      this.freeBodies.push(b);
-    };
-
-    removeBondsTouching(target.id);
-    removeFromEntity(target);
-
-    // Cascade: anything no longer reachable from the core also goes free.
-    const reachable = this.connectedToCore();
-    const orphans: Body[] = [];
-    for (const b of this.entityBodies) {
-      if (b === this.entityBodies[0]) continue;
-      if (!reachable.has(b.id)) orphans.push(b);
-    }
-    for (const o of orphans) {
-      removeBondsTouching(o.id);
-      removeFromEntity(o);
+  damageAbsorbed(amount: number): void {
+    let remaining = amount;
+    while (remaining > 0 && this.totalAbsorbed > 0) {
+      // Pick a random non-zero absorbed type to drain.
+      const candidates: NodeTypeId[] = [];
+      for (const k of Object.keys(this.absorbed) as NodeTypeId[]) {
+        if (k === "core") continue;
+        if ((this.absorbed[k] ?? 0) > 0) candidates.push(k);
+      }
+      if (candidates.length === 0) break;
+      const pick = candidates[this.rng.int(0, candidates.length - 1)];
+      this.absorbed[pick] -= 1;
+      this.totalAbsorbed -= 1;
+      remaining -= 1;
     }
 
-    this.sim.nodes(this.entityBodies);
-    this.linkForce.links(this.bonds);
-    this.traits = recomputeTraits(this.entityBodies, this.bonds);
+    // Recompute traits (some may have dropped out).
+    this.traits = recomputeTraits(this.absorbed);
+    // Note: prevTraitSet untouched — devolution doesn't re-fire trait
+    // unlock toasts on the way back up.
+
+    // Stage may have dropped.
+    const newStage = computeStage(this.totalAbsorbed);
+    if (newStage < this.evolutionStage) {
+      this.evolutionStage = newStage;
+      this.events.push(`devolve:${newStage}` as WorldEvent);
+    }
+
+    // Shrink the core's physics radius back down.
+    const core = this.entityBodies[0];
+    if (core) {
+      core.radius = 18 + Math.min(this.totalAbsorbed / 5, 22);
+    }
+
+    // Death: completely drained AND we still owed damage we couldn't pay.
+    if (this.totalAbsorbed <= 0 && remaining > 0 && this.runStatus === "running") {
+      this.runStatus = "dead";
+      this.runEndedAtMs = this.wallMs;
+      this.addShake(24);
+      this.events.push("death");
+    }
+  }
+
+  /** Legacy entry point; kept for back-compat with any external callers. */
+  pruneFromGraph(_target: Body): void {
+    /* no-op under absorb-counter model */
   }
 
   /** BFS from core; returns the set of captured-body ids reachable via bonds. */
@@ -860,63 +900,55 @@ export class World {
    * existing captured body. Mutates entityBodies / freeBodies and
    * re-hands the new node array to d3.forceSimulation.
    */
+  /**
+   * Absorb a free cell into the blob. Under the absorb-counter model
+   * captures don't extend the entity graph — they bump per-type counts
+   * + total. The bell evolves visually based on those counts.
+   *
+   * Returns null (legacy Bond return retained for API compat with the
+   * captureNearby caller).
+   */
   capture(free: Body): Bond | null {
     if (free.kind === "captured") return null;
     if (this.entityBodies.length === 0) return null;
 
-    let nearest = this.entityBodies[0];
-    let bestSq = Infinity;
-    const fx = free.x ?? 0;
-    const fy = free.y ?? 0;
-    for (const c of this.entityBodies) {
-      const dx = (c.x ?? 0) - fx;
-      const dy = (c.y ?? 0) - fy;
-      const d = dx * dx + dy * dy;
-      if (d < bestSq) {
-        bestSq = d;
-        nearest = c;
-      }
-    }
-
-    // Move from free pool → entity graph.
+    // Pull from free pool. Cell vanishes — no graph node added.
     const i = this.freeBodies.indexOf(free);
     if (i >= 0) this.freeBodies.splice(i, 1);
     free.kind = "captured";
-    this.entityBodies.push(free);
-    // Hand the updated node array to d3 so charge/collide/link include it.
-    this.sim.nodes(this.entityBodies);
+    free.magnetized = false;
 
-    const bond: Bond = {
-      id: newId("bond"),
-      source: free.id,
-      target: nearest.id,
-      strength: 1,
-      formedAt: this.tickN,
-    };
-    this.bonds.push(bond);
-    this.linkForce.links(this.bonds);
-    // Graph-mutation hook: refresh derived gameplay state once.
-    this.traits = recomputeTraits(this.entityBodies, this.bonds);
-    // First-time emergence toasts — emit per newly-active trait.
+    // Bump absorb counters.
+    this.absorbed[free.type] = (this.absorbed[free.type] ?? 0) + 1;
+    this.totalAbsorbed += 1;
+    this.peakCaptured = Math.max(this.peakCaptured, this.totalAbsorbed);
+
+    // Trait recompute — reads from absorb counts.
+    this.traits = recomputeTraits(this.absorbed);
     for (const id of this.traits.active) {
       if (!this.prevTraitSet.has(id)) {
         this.events.push(`trait:${id}` as WorldEvent);
       }
     }
     this.prevTraitSet = new Set(this.traits.active);
-    // Captured cell rejoins the swarm-free pool only on death; clear
-    // any in-flight lock-on bias.
-    free.magnetized = false;
-    this.peakCaptured = Math.max(this.peakCaptured, this.entityBodies.length);
-    // Visible evolution: grow the core's physics radius with size so
-    // capture surface scales (you swallow more as you become bigger).
-    // Cap at ~36px so the bell doesn't dominate the viewport.
+
+    // Grow the core's physics radius with stage so the capture surface
+    // scales as the blob evolves.
     const core = this.entityBodies[0];
     if (core) {
-      core.radius = 18 + Math.min(this.entityBodies.length / 5, 18);
+      core.radius = 18 + Math.min(this.totalAbsorbed / 5, 22);
     }
     this.events.push("capture");
-    // Combo detection — sliding window of recent capture timestamps.
+
+    // Stage advancement.
+    const newStage = computeStage(this.totalAbsorbed);
+    if (newStage > this.evolutionStage) {
+      this.evolutionStage = newStage;
+      this.events.push(`evolve:${newStage}` as WorldEvent);
+      this.addShake(10);
+    }
+
+    // Combo detection.
     this.recentCaptures.push(this.wallMs);
     this.recentCaptures = this.recentCaptures.filter(
       (t) => this.wallMs - t <= COMBO_WINDOW_MS,
@@ -929,25 +961,27 @@ export class World {
       this.events.push("combo");
       this.recentCaptures = [];
     }
-    // Biome milestones — emit on first crossing of each threshold so the
-    // run has visible shape between start and transcend.
-    for (let i = 0; i < BIOME_MILESTONES.length; i++) {
-      const m = BIOME_MILESTONES[i];
-      if (this.entityBodies.length === m) {
-        this.events.push(`biome:${m}` as WorldEvent);
+
+    // Biome milestones based on totalAbsorbed.
+    for (let m = 0; m < BIOME_MILESTONES.length; m++) {
+      const t = BIOME_MILESTONES[m];
+      if (this.totalAbsorbed === t) {
+        this.events.push(`biome:${t}` as WorldEvent);
         this.addShake(8);
-        this.biomeStage = i + 1;
+        this.biomeStage = m + 1;
       }
     }
-    if (this.entityBodies.length >= TRANSCEND_AT && this.runStatus === "running") {
+
+    if (this.totalAbsorbed >= TRANSCEND_AT && this.runStatus === "running") {
       this.runStatus = "transcended";
       this.runEndedAtMs = this.wallMs;
       this.addShake(15);
       this.events.push("transcend");
     }
+
     this.emitSparkle(free.x ?? 0, free.y ?? 0, "rgba(160, 240, 255,");
     this.reheat(0.4);
-    return bond;
+    return null;
   }
 
   /**

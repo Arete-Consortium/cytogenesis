@@ -426,11 +426,15 @@ export default function GameCanvas() {
             queueToast(TRAIT_LABEL[id]?.toUpperCase() ?? id.toUpperCase());
           }
           else if (typeof ev === "string" && ev.startsWith("biome:")) {
-            audio.transcend(); // re-use the chord — feels milestone-y
+            audio.transcend();
             queueToast(`DEPTH ${ev.slice("biome:".length)}`);
           }
+          else if (typeof ev === "string" && ev.startsWith("evolve:")) {
+            audio.transcend();
+            queueToast(`EVOLVED · STAGE ${ev.slice("evolve:".length)}`);
+          }
           else if (ev === "combo") {
-            audio.lockOn(); // bright zap — combo earned
+            audio.lockOn();
             queueToast("COMBO");
           }
           else if (ev === "killPred") {
@@ -454,16 +458,16 @@ export default function GameCanvas() {
           recordRun({
             peakCaptured: world.peakCaptured,
             durationMs: world.runEndedAtMs ?? world.wallMs,
-            bonds: world.bonds.length,
+            bonds: world.totalAbsorbed,
           }).then(setBestResult);
         }
         setStats({
           fps: Math.round(fpsAccum / elapsed),
           ms: Math.round(frameMs * 100) / 100,
           tick,
-          captured: counts.captured,
+          captured: world.totalAbsorbed,
           free: counts.free,
-          bonds: world.bonds.length,
+          bonds: world.totalAbsorbed,
           liveCA: Math.round(world.envCA.liveFraction() * 1000) / 10,
           traits: {
             ...world.traits,
@@ -525,7 +529,7 @@ export default function GameCanvas() {
         </div>
         <div className="text-zinc-200">
           <span className="text-cyan-300">{stats.captured}</span>
-          <span className="text-zinc-600"> bonded</span>
+          <span className="text-zinc-600"> absorbed</span>
         </div>
         {(stats.comboActive || stats.comboCount >= 2) && (
           <div

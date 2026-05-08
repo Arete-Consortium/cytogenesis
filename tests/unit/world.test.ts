@@ -28,7 +28,7 @@ describe("World", () => {
     expect(screen.y).toBeCloseTo(300);
   });
 
-  it("hitTest finds an entity body when point falls inside its disk", () => {
+  it("hitTest finds the core when point falls inside its disk", () => {
     const w = new World({ freeCount: 0 });
     const core = w.entityBodies[0];
     core.x = 100;
@@ -38,7 +38,6 @@ describe("World", () => {
 
   it("hitTest finds a free body via the quadtree path", () => {
     const w = new World({ freeCount: 5 });
-    // Park entity + four of the five free far away; place the fifth at known coords.
     w.entityBodies[0].x = 5000;
     w.entityBodies[0].y = 5000;
     for (let i = 0; i < w.freeBodies.length - 1; i++) {
@@ -70,7 +69,6 @@ describe("World", () => {
     const before = w.freeBodies.map((b) => ({ x: b.x, y: b.y }));
     for (let i = 0; i < 30; i++) w.tick();
     const after = w.freeBodies.map((b) => ({ x: b.x, y: b.y }));
-    // At least one body should have moved meaningfully.
     let moved = 0;
     for (let i = 0; i < before.length; i++) {
       const dx = (after[i].x ?? 0) - (before[i].x ?? 0);
@@ -88,7 +86,6 @@ describe("World", () => {
     b.vx = 5;
     b.vy = 0;
     w.tick();
-    // After tick: x would be 104+jitter; wrap subtracts 200 → ≈ −96.
     expect(b.x).toBeLessThan(-50);
     expect(b.x).toBeGreaterThan(-100);
   });

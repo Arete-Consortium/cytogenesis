@@ -413,13 +413,12 @@ function drawCoreTrail(ctx: CanvasRenderingContext2D, world: World): void {
  */
 let cachedBellAngle = 0;
 
-/** Counts of each NodeTypeId in the entity graph (excluding core). */
-function entityComposition(bodies: Body[]): Record<string, number> {
-  const counts: Record<string, number> = {};
-  for (let i = 1; i < bodies.length; i++) {
-    counts[bodies[i].type] = (counts[bodies[i].type] || 0) + 1;
-  }
-  return counts;
+/**
+ * Per-NodeTypeId counts driving bell composition. Reads directly from
+ * world.absorbed under the absorb-counter model (no graph organelles).
+ */
+function entityComposition(world: World): Record<string, number> {
+  return world.absorbed as unknown as Record<string, number>;
 }
 
 /** Parse rgba(r, g, b[, a]) → [r, g, b, a]. */
@@ -556,7 +555,7 @@ function drawCore(ctx: CanvasRenderingContext2D, world: World, core: Body): void
   const t = world.tickN;
   const breath = 1 + Math.sin(t * 0.04) * 0.06;
   const rr = core.radius * 1.55 * breath;
-  const comp = entityComposition(world.entityBodies);
+  const comp = entityComposition(world);
   const tentacleCount = Math.min(9, 5 + (comp.propulsion ?? 0));
   const organCount = Math.min(7, 3 + (comp.sensor ?? 0));
   const spikeCount = Math.min(8, comp.stinger ?? 0);
@@ -624,7 +623,7 @@ function drawCore(ctx: CanvasRenderingContext2D, world: World, core: Body): void
   // Bell mid-stop tints toward the dominant captured type so the
   // creature literally takes on the color of what it eats. Cap at
   // 50% blend so the bell doesn't lose its base identity.
-  const totalCaptured = world.entityBodies.length - 1;
+  const totalCaptured = world.totalAbsorbed;
   let bellMidColor = T.bell.bellMid;
   if (totalCaptured > 0) {
     let dominantType = "";
