@@ -4,6 +4,10 @@ Roguelike cellular-automation game. Pilot a single mobile core node through a pr
 
 Two themes (aquatic / galactic), two CA layers (environmental + trait), fully client-side.
 
+![Cytogenesis gameplay screenshot — a bell-shaped bioluminescent core with tendrils sits center-screen, surrounded by drifting free cells, with the Spirochete boss health bar across the top](./public/screenshot.png)
+
+Live: [cytogenesis.vercel.app](https://cytogenesis.vercel.app)
+
 ## Stack
 
 - Next.js 16 (App Router, Turbopack) + TypeScript + Tailwind 4

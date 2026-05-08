@@ -109,6 +109,12 @@ export default function GameCanvas() {
     { best: null, isNewBest: false },
   );
   const hasRecordedRef = useRef(false);
+  // Ref-mirror so the rAF effect's pointer handler reads the live value
+  // without re-mounting the World on tutorial dismissal.
+  const showTutorialRef = useRef(showTutorial);
+  useEffect(() => {
+    showTutorialRef.current = showTutorial;
+  }, [showTutorial]);
 
   // Initialize mute + tutorial + theme from localStorage on mount.
   // SSR-safe hydration: deferring these reads to an effect avoids a
@@ -309,7 +315,7 @@ export default function GameCanvas() {
     // so updateStickAnchor can reference pointerDownAt safely.
     const onPointerDown = (e: PointerEvent) => {
       audio.init();
-      if (showTutorial) dismissTutorial();
+      if (showTutorialRef.current) dismissTutorial();
       activePointers.add(e.pointerId);
       if (activePointers.size > 1) {
         clearStickInput();
