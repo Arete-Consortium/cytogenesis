@@ -22,7 +22,13 @@ export interface Vec2 {
  * body is part of the player's entity graph or a free-floating cell.
  */
 export type PredatorVariant = "skirmisher" | "brute";
-export type BossKind = "swarmLord" | "tideMaw" | "abyssEye" | "centipede";
+export type BossKind =
+  | "swarmLord"   // Volvox (colonial alga + daughter colonies)
+  | "tideMaw"    // Amoeba (mimic protozoan)
+  | "abyssEye"   // legacy, unused
+  | "centipede"  // Spirochete (long bacterial chain)
+  | "phage"      // Bacteriophage (stationary, ranged virion projectile)
+  | "ciliate";   // Ciliate (Paramecium-style chaser with cilia ring)
 
 export interface Body extends SimulationNodeDatum {
   id: string;

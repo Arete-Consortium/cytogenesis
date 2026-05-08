@@ -123,6 +123,7 @@ export type WorldEvent =
   | "bossEnrage"
   | "bossWindup"
   | "bossLunge"
+  | "phageFire"
   | "editorOpen"
   | "partPlaced"
   | `trait:${string}`
@@ -204,23 +205,43 @@ const CENTIPEDE_LEVEL_BY_BIOME: Record<number, number> = {
   620: 2,
 };
 const BOSS_HEALTH: Record<BossKind, number> = {
-  swarmLord: 36,    // hive queen — tankier, gated behind drone kills
-  tideMaw: 28,      // mirror — proportional to player mass at spawn
-  abyssEye: 40,     // legacy, unused
+  swarmLord: 36,
+  tideMaw: 28,
+  abyssEye: 40,
   centipede: 24,
+  phage: 26,
+  ciliate: 30,
 };
 const BOSS_RADIUS: Record<BossKind, number> = {
   swarmLord: 30,
   tideMaw: 24,
   abyssEye: 28,
   centipede: 22,
+  phage: 22,
+  ciliate: 26,
 };
 const BOSS_REWARD_TYPE: Record<BossKind, NodeTypeId> = {
-  swarmLord: "spore",       // hive queen drops spore mass
-  tideMaw: "stinger",       // mirror drops stinger mass
+  swarmLord: "spore",
+  tideMaw: "stinger",
   abyssEye: "mitochondrion",
   centipede: "membrane",
+  phage: "mitochondrion",   // virion injection → mitochondrial drop
+  ciliate: "chloroplast",   // food competitor → chloroplast drop
 };
+
+/** Phage tuning. */
+const PHAGE_DRIFT_SPEED = 0.18;       // very slow (mostly stationary)
+const PHAGE_FIRE_INTERVAL_MS = 3000;
+const PHAGE_VIRION_SPEED = 4.2;
+const PHAGE_VIRION_DAMAGE = 4;
+const PHAGE_VIRION_LIFE_MS = 1800;
+const PHAGE_PLAYER_DAMAGE_COOLDOWN_TICKS = 50;
+
+/** Ciliate tuning. */
+const CILIATE_SPEED = 1.05;            // a touch faster than spirochete head
+const CILIATE_PLAYER_DAMAGE = 4;
+const CILIATE_PLAYER_DAMAGE_COOLDOWN_TICKS = 55;
+const CILIATE_EAT_RANGE = 12;
 const BOSS_REWARD_AMOUNT = 5;
 
 /** Hive queen tuning. */
@@ -500,6 +521,30 @@ export class World {
     /** Hue shift for visual distinction. */
     hueShift: number;
   } | null;
+  /** Active phage boss. */
+  phage: {
+    body: Body;
+    level: number;
+    cycleRound: number;
+    maxHealth: number;
+    spawnedAtTickN: number;
+    nextDamageTickN: number;
+    /** wallMs of next virion fire. */
+    nextFireAtMs: number;
+    /** Active virion projectiles aimed at the player. */
+    virions: { x: number; y: number; vx: number; vy: number; bornMs: number }[];
+  } | null;
+  /** Active ciliate boss. */
+  ciliate: {
+    body: Body;
+    level: number;
+    cycleRound: number;
+    maxHealth: number;
+    spawnedAtTickN: number;
+    nextDamageTickN: number;
+    /** Cells eaten this fight — for visual growth (cosmetic). */
+    cellsEaten: number;
+  } | null;
   /** Wallclock at which the next chloroplast regen will fire. */
   private nextRegenAtMs: number;
   /** Wallclock at which the next ecology pass will fire. */
@@ -609,6 +654,8 @@ export class World {
     this.centipede = null;
     this.hiveQueen = null;
     this.mirror = null;
+    this.phage = null;
+    this.ciliate = null;
     // Schedule the first centipede shortly after run start so the
     // player isn't dropped straight into the boss fight.
     this.nextCentipedeAtMs = CENTIPEDE_INITIAL_SPAWN_DELAY_MS;
@@ -779,6 +826,8 @@ export class World {
     this.integrateCentipede(scale);
     this.integrateHiveQueen(scale);
     this.integrateMirror(scale);
+    this.integratePhage(scale);
+    this.integrateCiliate(scale);
     this.simAccum += scale;
     while (this.simAccum >= 1) {
       this.sim.tick();
@@ -1056,13 +1105,11 @@ export class World {
    */
   private spawnBoss(kind: BossKind, milestone: number): void {
     const level = CENTIPEDE_LEVEL_BY_BIOME[milestone] ?? 1;
-    if (kind === "swarmLord") {
-      this.spawnHiveQueen(level);
-    } else if (kind === "tideMaw") {
-      this.spawnMirror(level);
-    } else {
-      this.spawnCentipede(level);
-    }
+    if (kind === "swarmLord") this.spawnHiveQueen(level);
+    else if (kind === "tideMaw") this.spawnMirror(level);
+    else if (kind === "phage") this.spawnPhage(level);
+    else if (kind === "ciliate") this.spawnCiliate(level);
+    else this.spawnCentipede(level);
   }
 
   private spawnHiveQueen(level: number): void {
@@ -1203,6 +1250,89 @@ export class World {
       nextDamageTickN: 0,
       mirroredAbsorbed: mirrored,
       hueShift: this.rng.range(120, 280), // tinted away from cyan
+    };
+    this.events.push("bossSpawn");
+    this.addShake(15);
+  }
+
+  private spawnPhage(level: number): void {
+    const core = this.entityBodies[0];
+    const cx = core?.x ?? 0;
+    const cy = core?.y ?? 0;
+    const angle = this.rng.next() * Math.PI * 2;
+    const spawnDist = 280;
+    const a = this.arenaHalf;
+    const px = Math.max(-a, Math.min(a, cx + Math.cos(angle) * spawnDist));
+    const py = Math.max(-a, Math.min(a, cy + Math.sin(angle) * spawnDist));
+    const cycle = this.cycleRound();
+    const cycleMul = Math.pow(1.4, cycle);
+    const levelMul = 1 + (level - 1) * 0.4;
+    const radius = BOSS_RADIUS.phage * (1 + cycle * 0.05) * (1 + (level - 1) * 0.08);
+    const health = Math.round(BOSS_HEALTH.phage * cycleMul * levelMul);
+    const body: Body = {
+      id: newId("phage"),
+      type: "spore",
+      kind: "predator",
+      radius,
+      x: px,
+      y: py,
+      vx: 0,
+      vy: 0,
+      variant: "brute",
+      health,
+      bossKind: "phage",
+    };
+    this.predators.push(body);
+    this.phage = {
+      body,
+      level,
+      cycleRound: cycle,
+      maxHealth: health,
+      spawnedAtTickN: this.tickN,
+      nextDamageTickN: 0,
+      nextFireAtMs: this.wallMs + 1500,  // brief grace before first shot
+      virions: [],
+    };
+    this.events.push("bossSpawn");
+    this.addShake(15);
+  }
+
+  private spawnCiliate(level: number): void {
+    const core = this.entityBodies[0];
+    const cx = core?.x ?? 0;
+    const cy = core?.y ?? 0;
+    const angle = this.rng.next() * Math.PI * 2;
+    const spawnDist = 240;
+    const a = this.arenaHalf;
+    const cxs = Math.max(-a, Math.min(a, cx + Math.cos(angle) * spawnDist));
+    const cys = Math.max(-a, Math.min(a, cy + Math.sin(angle) * spawnDist));
+    const cycle = this.cycleRound();
+    const cycleMul = Math.pow(1.4, cycle);
+    const levelMul = 1 + (level - 1) * 0.4;
+    const radius = BOSS_RADIUS.ciliate * (1 + cycle * 0.05) * (1 + (level - 1) * 0.08);
+    const health = Math.round(BOSS_HEALTH.ciliate * cycleMul * levelMul);
+    const body: Body = {
+      id: newId("ciliate"),
+      type: "spore",
+      kind: "predator",
+      radius,
+      x: cxs,
+      y: cys,
+      vx: 0,
+      vy: 0,
+      variant: "brute",
+      health,
+      bossKind: "ciliate",
+    };
+    this.predators.push(body);
+    this.ciliate = {
+      body,
+      level,
+      cycleRound: cycle,
+      maxHealth: health,
+      spawnedAtTickN: this.tickN,
+      nextDamageTickN: 0,
+      cellsEaten: 0,
     };
     this.events.push("bossSpawn");
     this.addShake(15);
@@ -1790,19 +1920,230 @@ export class World {
     this.nextCentipedeAtMs = this.wallMs + CENTIPEDE_RESPAWN_DELAY_MS;
   }
 
+  /**
+   * Phage tick — slow drift toward player + periodic ranged virion
+   * attack. Virions are simple linear projectiles that damage on
+   * contact, despawn after life elapses.
+   */
+  private integratePhage(scale: number): void {
+    const p = this.phage;
+    if (!p) return;
+    const a = this.arenaHalf;
+    const span = a * 2;
+    const core = this.entityBodies[0];
+    const cx = core?.x ?? 0;
+    const cy = core?.y ?? 0;
+
+    // Slow drift toward player.
+    const px = p.body.x ?? 0;
+    const py = p.body.y ?? 0;
+    const dx = cx - px;
+    const dy = cy - py;
+    const len = Math.hypot(dx, dy) || 1;
+    p.body.vx = (dx / len) * PHAGE_DRIFT_SPEED;
+    p.body.vy = (dy / len) * PHAGE_DRIFT_SPEED;
+    let nx = px + p.body.vx * scale;
+    let ny = py + p.body.vy * scale;
+    if (nx > a) nx -= span;
+    else if (nx < -a) nx += span;
+    if (ny > a) ny -= span;
+    else if (ny < -a) ny += span;
+    p.body.x = nx;
+    p.body.y = ny;
+
+    // Fire a virion at the player periodically.
+    if (this.wallMs >= p.nextFireAtMs) {
+      const ax = cx - (p.body.x ?? 0);
+      const ay = cy - (p.body.y ?? 0);
+      const al = Math.hypot(ax, ay) || 1;
+      p.virions.push({
+        x: p.body.x ?? 0,
+        y: p.body.y ?? 0,
+        vx: (ax / al) * PHAGE_VIRION_SPEED,
+        vy: (ay / al) * PHAGE_VIRION_SPEED,
+        bornMs: this.wallMs,
+      });
+      p.nextFireAtMs = this.wallMs +
+        Math.max(1500, PHAGE_FIRE_INTERVAL_MS - p.cycleRound * 300 - (p.level - 1) * 200);
+      this.events.push("phageFire");
+    }
+
+    // Advance virions, despawn old, damage on hit.
+    for (let i = p.virions.length - 1; i >= 0; i--) {
+      const v = p.virions[i];
+      v.x += v.vx * scale;
+      v.y += v.vy * scale;
+      const age = this.wallMs - v.bornMs;
+      if (age > PHAGE_VIRION_LIFE_MS) {
+        p.virions.splice(i, 1);
+        continue;
+      }
+      // Wrap
+      if (v.x > a) v.x -= span;
+      else if (v.x < -a) v.x += span;
+      if (v.y > a) v.y -= span;
+      else if (v.y < -a) v.y += span;
+      // Hit-test player
+      const hdx = cx - v.x;
+      const hdy = cy - v.y;
+      const hr = (core?.radius ?? 18) + 5;
+      if (hdx * hdx + hdy * hdy <= hr * hr) {
+        this.damageAbsorbed(PHAGE_VIRION_DAMAGE);
+        this.addShake(10);
+        this.events.push("hit");
+        this.emitSparkle(cx, cy, "rgba(248, 113, 113,");
+        p.virions.splice(i, 1);
+      }
+    }
+
+    // Bell contact damage (toxic-bell counter — phage takes damage
+    // from being rammed by a stinger-laced bell).
+    if (this.tickN >= p.nextDamageTickN) {
+      const bdx = cx - (p.body.x ?? 0);
+      const bdy = cy - (p.body.y ?? 0);
+      const br = p.body.radius + (core?.radius ?? 18);
+      if (bdx * bdx + bdy * bdy <= br * br) {
+        this.damageAbsorbed(3);
+        this.addShake(8);
+        this.events.push("hit");
+        this.emitSparkle(cx, cy, "rgba(248, 113, 113,");
+        p.nextDamageTickN = this.tickN + PHAGE_PLAYER_DAMAGE_COOLDOWN_TICKS;
+        const stingers = this.absorbed.stinger ?? 0;
+        if (stingers > 0 && p.body.health != null) {
+          p.body.health -= stingers;
+          if (p.body.health <= 0) {
+            this.killPhage();
+            return;
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Ciliate tick — chases player aggressively + eats nearby free
+   * cells (steals food from the player). Contact damage on hit.
+   */
+  private integrateCiliate(scale: number): void {
+    const c = this.ciliate;
+    if (!c) return;
+    const a = this.arenaHalf;
+    const span = a * 2;
+    const core = this.entityBodies[0];
+    const cx = core?.x ?? 0;
+    const cy = core?.y ?? 0;
+
+    const bx = c.body.x ?? 0;
+    const by = c.body.y ?? 0;
+    const dx = cx - bx;
+    const dy = cy - by;
+    const len = Math.hypot(dx, dy) || 1;
+    const speed = CILIATE_SPEED * (1 + c.cycleRound * 0.1) * (1 + (c.level - 1) * 0.1);
+    c.body.vx = (dx / len) * speed;
+    c.body.vy = (dy / len) * speed;
+    let nx = bx + c.body.vx * scale;
+    let ny = by + c.body.vy * scale;
+    if (nx > a) nx -= span;
+    else if (nx < -a) nx += span;
+    if (ny > a) ny -= span;
+    else if (ny < -a) ny += span;
+    c.body.x = nx;
+    c.body.y = ny;
+
+    // Eat nearby free cells (food competition with player).
+    for (let i = this.freeBodies.length - 1; i >= 0; i--) {
+      const f = this.freeBodies[i];
+      const ddx = (f.x ?? 0) - (c.body.x ?? 0);
+      const ddy = (f.y ?? 0) - (c.body.y ?? 0);
+      const r = c.body.radius + f.radius + CILIATE_EAT_RANGE;
+      if (ddx * ddx + ddy * ddy <= r * r) {
+        this.freeBodies.splice(i, 1);
+        c.cellsEaten += 1;
+        this.emitSparkle(f.x ?? 0, f.y ?? 0, "rgba(120, 220, 255,");
+        break; // one eat per tick keeps the soup from emptying
+      }
+    }
+
+    // Damage player on contact.
+    if (this.tickN >= c.nextDamageTickN) {
+      const cdx = cx - (c.body.x ?? 0);
+      const cdy = cy - (c.body.y ?? 0);
+      const cr = c.body.radius + (core?.radius ?? 18);
+      if (cdx * cdx + cdy * cdy <= cr * cr) {
+        this.damageAbsorbed(CILIATE_PLAYER_DAMAGE);
+        this.addShake(11);
+        this.events.push("hit");
+        this.emitSparkle(cx, cy, "rgba(248, 113, 113,");
+        c.nextDamageTickN = this.tickN + CILIATE_PLAYER_DAMAGE_COOLDOWN_TICKS;
+        const stingers = this.absorbed.stinger ?? 0;
+        if (stingers > 0 && c.body.health != null) {
+          c.body.health -= stingers;
+          if (c.body.health <= 0) {
+            this.killCiliate();
+            return;
+          }
+        }
+      }
+    }
+  }
+
+  private killPhage(): void {
+    const p = this.phage;
+    if (!p) return;
+    this.predators = this.predators.filter((x) => x !== p.body);
+    this.emitSparkle(p.body.x ?? 0, p.body.y ?? 0, "rgba(180, 220, 255,");
+    this.addShake(20);
+    this.events.push("killBoss");
+    this.bossesDefeated += 1;
+    const cycleMul = Math.pow(1.5, p.cycleRound);
+    const rewardAmount = Math.round(BOSS_REWARD_AMOUNT * cycleMul);
+    for (let i = 0; i < rewardAmount; i++) {
+      this.absorbed.mitochondrion += 1;
+      this.totalAbsorbed += 1;
+    }
+    this.peakCaptured = Math.max(this.peakCaptured, this.totalAbsorbed);
+    this.traits = recomputeTraits(this.absorbed);
+    this.phage = null;
+    this.checkMilestones();
+    this.nextCentipedeAtMs = this.wallMs + CENTIPEDE_RESPAWN_DELAY_MS;
+  }
+
+  private killCiliate(): void {
+    const c = this.ciliate;
+    if (!c) return;
+    this.predators = this.predators.filter((x) => x !== c.body);
+    this.emitSparkle(c.body.x ?? 0, c.body.y ?? 0, "rgba(140, 240, 200,");
+    this.addShake(20);
+    this.events.push("killBoss");
+    this.bossesDefeated += 1;
+    const cycleMul = Math.pow(1.5, c.cycleRound);
+    const rewardAmount = Math.round(BOSS_REWARD_AMOUNT * cycleMul);
+    for (let i = 0; i < rewardAmount; i++) {
+      this.absorbed.chloroplast += 1;
+      this.totalAbsorbed += 1;
+    }
+    this.peakCaptured = Math.max(this.peakCaptured, this.totalAbsorbed);
+    this.traits = recomputeTraits(this.absorbed);
+    this.ciliate = null;
+    this.checkMilestones();
+    this.nextCentipedeAtMs = this.wallMs + CENTIPEDE_RESPAWN_DELAY_MS;
+  }
+
   /** Spawn the next boss when the breather window has elapsed.
-   *  Cycles centipede → hive queen → mirror → centipede → ... */
+   *  Cycles spirochete → volvox → amoeba → phage → ciliate → ... */
   private maybeRespawnCentipede(): void {
-    if (this.centipede || this.hiveQueen || this.mirror) return;
+    if (this.centipede || this.hiveQueen || this.mirror || this.phage || this.ciliate) return;
     if (this.nextCentipedeAtMs == null) return;
     if (this.wallMs < this.nextCentipedeAtMs) return;
     this.nextCentipedeAtMs = null;
-    const cycle: BossKind[] = ["centipede", "swarmLord", "tideMaw"];
+    const cycle: BossKind[] = ["centipede", "swarmLord", "tideMaw", "phage", "ciliate"];
     const nextKind = cycle[this.bossesDefeated % cycle.length];
     const nextLevel = (Math.floor(this.bossesDefeated / cycle.length) % 3) + 1;
     if (nextKind === "centipede") this.spawnCentipede(nextLevel);
     else if (nextKind === "swarmLord") this.spawnHiveQueen(nextLevel);
     else if (nextKind === "tideMaw") this.spawnMirror(nextLevel);
+    else if (nextKind === "phage") this.spawnPhage(nextLevel);
+    else if (nextKind === "ciliate") this.spawnCiliate(nextLevel);
   }
 
   /**
@@ -2298,6 +2639,26 @@ export class World {
       if (predator.health == null) return true;
       predator.health -= stingers;
       if (predator.health <= 0) this.killMirror();
+      return true;
+    }
+
+    // Phage: single body, full stinger damage.
+    if (predator.bossKind === "phage") {
+      const p = this.phage;
+      if (!p) return true;
+      if (predator.health == null) return true;
+      predator.health -= stingers;
+      if (predator.health <= 0) this.killPhage();
+      return true;
+    }
+
+    // Ciliate: single body, full stinger damage.
+    if (predator.bossKind === "ciliate") {
+      const c = this.ciliate;
+      if (!c) return true;
+      if (predator.health == null) return true;
+      predator.health -= stingers;
+      if (predator.health <= 0) this.killCiliate();
       return true;
     }
 

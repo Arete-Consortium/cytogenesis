@@ -536,6 +536,9 @@ export default function GameCanvas() {
             audio.hit();
             queueToast("LUNGE HIT");
           }
+          else if (ev === "phageFire") {
+            audio.lockOn();
+          }
           else if (ev === "editorOpen") {
             audio.transcend();
             setEditorState({

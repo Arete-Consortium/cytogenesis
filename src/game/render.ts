@@ -1129,6 +1129,8 @@ export function drawPredators(ctx: CanvasRenderingContext2D, world: World): void
   if (world.centipede) drawCentipede(ctx, world);
   if (world.hiveQueen) drawHiveQueen(ctx, world);
   if (world.mirror) drawMirror(ctx, world);
+  if (world.phage) drawPhage(ctx, world);
+  if (world.ciliate) drawCiliate(ctx, world);
   if (world.predators.length === 0) return;
   const t = world.tickN;
   for (const p of world.predators) {
@@ -1136,10 +1138,229 @@ export function drawPredators(ctx: CanvasRenderingContext2D, world: World): void
     if (p.bossKind === "centipede") continue;
     if (p.bossKind === "swarmLord") continue;
     if (p.bossKind === "tideMaw") continue;
+    if (p.bossKind === "phage") continue;
+    if (p.bossKind === "ciliate") continue;
     if (p.bossKind === "abyssEye") drawAbyssEye(ctx, p, t);
     else if (p.variant === "brute") drawBrutePredator(ctx, p, t);
     else drawSkirmisherPredator(ctx, p, t);
   }
+}
+
+/* ─── Phage (T4 Bacteriophage) ────────────────────────────────────── */
+
+/**
+ * Bacteriophage rendered as a hexagonal capsid head + contractile
+ * tail with baseplate + 6 splayed tail fibers. Fires virion
+ * projectiles (also rendered here) with a glowing green core.
+ */
+function drawPhage(ctx: CanvasRenderingContext2D, world: World): void {
+  const p = world.phage;
+  if (!p) return;
+  const t = world.tickN;
+  const x = p.body.x ?? 0;
+  const y = p.body.y ?? 0;
+  const r = p.body.radius;
+  const angle = Math.atan2((p.body.vy ?? 0) || 0.0001, (p.body.vx ?? 0) || 0.0001);
+
+  // Halo — viral cyan glow.
+  const halo = ctx.createRadialGradient(x, y, r * 0.4, x, y, r * 2.4);
+  halo.addColorStop(0, "rgba(120, 230, 200, 0.32)");
+  halo.addColorStop(1, "rgba(120, 230, 200, 0)");
+  ctx.fillStyle = halo;
+  ctx.beginPath();
+  ctx.arc(x, y, r * 2.4, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Virions (active projectiles) — drawn first so phage sits on top.
+  for (const v of p.virions) {
+    const vh = ctx.createRadialGradient(v.x, v.y, 0, v.x, v.y, 12);
+    vh.addColorStop(0, "rgba(150, 255, 200, 0.85)");
+    vh.addColorStop(1, "rgba(150, 255, 200, 0)");
+    ctx.fillStyle = vh;
+    ctx.beginPath();
+    ctx.arc(v.x, v.y, 12, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "rgba(60, 200, 130, 0.95)";
+    ctx.beginPath();
+    ctx.arc(v.x, v.y, 4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "rgba(255,255,255,0.85)";
+    ctx.beginPath();
+    ctx.arc(v.x - 1, v.y - 1, 1.4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angle);
+
+  // Tail fibers — 6 thin legs splayed forward (toward player) from
+  // the baseplate. Each is a thin angled line.
+  ctx.strokeStyle = "rgba(60, 90, 80, 0.85)";
+  ctx.lineWidth = 1.4;
+  ctx.lineCap = "round";
+  for (let i = 0; i < 6; i++) {
+    const fa = (i / 5 - 0.5) * 1.4;
+    const baseX = r * 0.9;
+    const baseY = 0;
+    const tipX = baseX + Math.cos(fa) * r * 1.1;
+    const tipY = Math.sin(fa) * r * 1.4;
+    ctx.beginPath();
+    ctx.moveTo(baseX, baseY);
+    ctx.lineTo(tipX, tipY);
+    ctx.stroke();
+  }
+
+  // Tail (contractile sheath) — rectangle pointing forward.
+  ctx.fillStyle = "rgba(45, 70, 60, 0.95)";
+  ctx.fillRect(0, -r * 0.18, r * 0.9, r * 0.36);
+  // Tail rings (ridges)
+  ctx.strokeStyle = "rgba(20, 35, 30, 0.9)";
+  ctx.lineWidth = 1;
+  for (let i = 1; i < 5; i++) {
+    const rx = (r * 0.9) * (i / 5);
+    ctx.beginPath();
+    ctx.moveTo(rx, -r * 0.18);
+    ctx.lineTo(rx, r * 0.18);
+    ctx.stroke();
+  }
+  // Baseplate — hex prism cap at the tail's tip
+  ctx.fillStyle = "rgba(80, 130, 110, 0.95)";
+  ctx.fillRect(r * 0.85, -r * 0.26, r * 0.12, r * 0.52);
+  ctx.strokeStyle = "rgba(20, 35, 30, 0.9)";
+  ctx.strokeRect(r * 0.85, -r * 0.26, r * 0.12, r * 0.52);
+
+  // Capsid head — hexagonal silhouette at the back. Pulses green.
+  const headPulse = 0.6 + 0.4 * Math.sin(t * 0.06);
+  ctx.beginPath();
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2 + Math.PI / 6;
+    const hx = -r * 0.4 + Math.cos(a) * r * 0.7;
+    const hy = Math.sin(a) * r * 0.7;
+    if (i === 0) ctx.moveTo(hx, hy);
+    else ctx.lineTo(hx, hy);
+  }
+  ctx.closePath();
+  const headGrad = ctx.createRadialGradient(-r * 0.4, 0, 0, -r * 0.4, 0, r * 0.7);
+  headGrad.addColorStop(0, `rgba(160, 240, 200, ${(0.95 * headPulse).toFixed(3)})`);
+  headGrad.addColorStop(0.6, "rgba(80, 160, 130, 0.92)");
+  headGrad.addColorStop(1, "rgba(30, 70, 60, 0.95)");
+  ctx.fillStyle = headGrad;
+  ctx.fill();
+  ctx.strokeStyle = "rgba(20, 50, 40, 0.95)";
+  ctx.lineWidth = 1.6;
+  ctx.stroke();
+  // DNA bundle inside the capsid — glowing core
+  ctx.fillStyle = `rgba(180, 255, 220, ${(0.85 * headPulse).toFixed(3)})`;
+  ctx.beginPath();
+  ctx.arc(-r * 0.4, 0, r * 0.22, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
+}
+
+/* ─── Ciliate (Paramecium) ────────────────────────────────────────── */
+
+/**
+ * Paramecium-style ciliate — ovoid body covered in beating cilia,
+ * visible oral groove on the leading face, internal contractile
+ * vacuoles. Fast chaser that competes for free cells.
+ */
+function drawCiliate(ctx: CanvasRenderingContext2D, world: World): void {
+  const c = world.ciliate;
+  if (!c) return;
+  const t = world.tickN;
+  const x = c.body.x ?? 0;
+  const y = c.body.y ?? 0;
+  const r = c.body.radius;
+  const angle = Math.atan2((c.body.vy ?? 0) || 0.0001, (c.body.vx ?? 0) || 0.0001);
+
+  // Halo — pale aqua.
+  const halo = ctx.createRadialGradient(x, y, r * 0.4, x, y, r * 2.4);
+  halo.addColorStop(0, "rgba(150, 240, 220, 0.30)");
+  halo.addColorStop(1, "rgba(150, 240, 220, 0)");
+  ctx.fillStyle = halo;
+  ctx.beginPath();
+  ctx.arc(x, y, r * 2.4, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angle);
+
+  // Cilia ring — many short hairs all around the perimeter, beating
+  // in a metachronal wave (Paramecium-style — neighbors slightly
+  // out of phase).
+  const CILIA = 36;
+  ctx.strokeStyle = "rgba(150, 220, 200, 0.85)";
+  ctx.lineWidth = 1;
+  ctx.lineCap = "round";
+  for (let i = 0; i < CILIA; i++) {
+    const a = (i / CILIA) * Math.PI * 2;
+    const wave = Math.sin(t * 0.4 + i * 0.6);
+    const len = r * (0.4 + 0.15 * wave);
+    // Body is elongated along x — squish ciliate radially via aspect.
+    const aspectX = r * 1.15;
+    const aspectY = r * 0.8;
+    const baseX = Math.cos(a) * aspectX;
+    const baseY = Math.sin(a) * aspectY;
+    // Tip extends outward perpendicular to the surface, swept back.
+    const tipX = baseX + Math.cos(a) * len - 1.5;
+    const tipY = baseY + Math.sin(a) * len;
+    ctx.beginPath();
+    ctx.moveTo(baseX, baseY);
+    ctx.lineTo(tipX, tipY);
+    ctx.stroke();
+  }
+
+  // Body — pale cytoplasm gradient.
+  const bodyGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, r * 1.1);
+  bodyGrad.addColorStop(0, "rgba(220, 250, 240, 0.95)");
+  bodyGrad.addColorStop(0.6, "rgba(150, 220, 200, 0.85)");
+  bodyGrad.addColorStop(1, "rgba(80, 160, 140, 0.92)");
+  ctx.fillStyle = bodyGrad;
+  ctx.beginPath();
+  ctx.ellipse(0, 0, r * 1.15, r * 0.8, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(40, 100, 80, 0.85)";
+  ctx.lineWidth = 1.4;
+  ctx.stroke();
+
+  // Oral groove — visible cleft on the leading edge (Paramecium
+  // sweeps food in here). Curved dark stroke.
+  ctx.strokeStyle = "rgba(30, 60, 50, 0.85)";
+  ctx.lineWidth = 1.6;
+  ctx.beginPath();
+  ctx.moveTo(r * 0.55, -r * 0.25);
+  ctx.quadraticCurveTo(r * 0.8, 0, r * 0.55, r * 0.25);
+  ctx.stroke();
+
+  // Contractile vacuoles — two pulsing dots at front + rear poles
+  const vacPulse = 0.6 + 0.4 * Math.sin(t * 0.08);
+  ctx.fillStyle = `rgba(200, 240, 230, ${(0.85 * vacPulse).toFixed(3)})`;
+  ctx.beginPath();
+  ctx.arc(-r * 0.55, 0, r * (0.15 + 0.04 * vacPulse), 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(r * 0.25, 0, r * (0.10 + 0.03 * vacPulse), 0, Math.PI * 2);
+  ctx.fill();
+  // Vacuole rims
+  ctx.strokeStyle = "rgba(40, 90, 80, 0.7)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.arc(-r * 0.55, 0, r * 0.15, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(r * 0.25, 0, r * 0.10, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // Macronucleus — large internal kidney shape
+  ctx.fillStyle = "rgba(60, 120, 100, 0.4)";
+  ctx.beginPath();
+  ctx.ellipse(-r * 0.05, 0, r * 0.32, r * 0.22, 0.3, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
 }
 
 /* ─── Volvox (was Hive Queen) ────────────────────────────────────── */
@@ -2358,6 +2579,16 @@ export function drawBossHealthBar(
     hp = Math.max(0, m.body.health ?? 0);
     maxHp = Math.max(1, m.maxHealth);
     label = `AMOEBA · LV ${m.level}${m.cycleRound > 0 ? ` · CYCLE ${m.cycleRound}` : ""}`;
+  } else if (world.phage) {
+    const p = world.phage;
+    hp = Math.max(0, p.body.health ?? 0);
+    maxHp = Math.max(1, p.maxHealth);
+    label = `PHAGE · LV ${p.level}${p.cycleRound > 0 ? ` · CYCLE ${p.cycleRound}` : ""}`;
+  } else if (world.ciliate) {
+    const c = world.ciliate;
+    hp = Math.max(0, c.body.health ?? 0);
+    maxHp = Math.max(1, c.maxHealth);
+    label = `CILIATE · LV ${c.level}${c.cycleRound > 0 ? ` · CYCLE ${c.cycleRound}` : ""}${c.cellsEaten > 0 ? ` · ${c.cellsEaten} EATEN` : ""}`;
   } else {
     return;
   }
@@ -2484,6 +2715,12 @@ export function drawBossIndicator(
   } else if (world.mirror) {
     bossX = world.mirror.body.x ?? 0;
     bossY = world.mirror.body.y ?? 0;
+  } else if (world.phage) {
+    bossX = world.phage.body.x ?? 0;
+    bossY = world.phage.body.y ?? 0;
+  } else if (world.ciliate) {
+    bossX = world.ciliate.body.x ?? 0;
+    bossY = world.ciliate.body.y ?? 0;
   } else {
     return;
   }
