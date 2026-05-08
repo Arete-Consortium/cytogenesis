@@ -586,6 +586,73 @@ export function drawSparkles(ctx: CanvasRenderingContext2D, world: World): void 
   }
 }
 
+/* ─── Telegraphs (incoming-predator warning) ──────────────────────── */
+
+/**
+ * Draw a pulsing red chevron pointing toward each pending predator
+ * spawn. If the spawn is inside the viewport, render at the world
+ * position; otherwise project to the nearest viewport edge. Runs in
+ * screen space — call BEFORE applyCamera.
+ */
+export function drawTelegraphs(
+  ctx: CanvasRenderingContext2D,
+  world: World,
+  vw: number,
+  vh: number,
+): void {
+  if (world.telegraphs.length === 0) return;
+  const cx = vw / 2;
+  const cy = vh / 2;
+  const padding = 28;
+  for (const tg of world.telegraphs) {
+    const sx = tg.x * world.camera.k + world.camera.x;
+    const sy = tg.y * world.camera.k + world.camera.y;
+    const inside =
+      sx >= padding && sx <= vw - padding && sy >= padding && sy <= vh - padding;
+    let ax: number;
+    let ay: number;
+    if (inside) {
+      ax = sx;
+      ay = sy;
+    } else {
+      const dx = sx - cx;
+      const dy = sy - cy;
+      const halfW = cx - padding;
+      const halfH = cy - padding;
+      const sX = halfW / Math.abs(dx || 1);
+      const sY = halfH / Math.abs(dy || 1);
+      const s = Math.min(sX, sY);
+      ax = cx + dx * s;
+      ay = cy + dy * s;
+    }
+    const remaining = Math.max(0, (tg.untilMs - world.wallMs) / 1500);
+    const pulse = 0.55 + 0.45 * Math.sin(world.tickN * 0.3);
+    const baseAlpha = (1 - remaining) * 0.35 + pulse * 0.5;
+    const alpha = Math.min(0.95, baseAlpha);
+    const angle = Math.atan2(sy - cy, sx - cx);
+    ctx.save();
+    ctx.translate(ax, ay);
+    ctx.rotate(angle);
+    // Chevron pointing forward
+    ctx.fillStyle = `rgba(239, 68, 68, ${alpha.toFixed(3)})`;
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(-14, -8);
+    ctx.lineTo(-9, 0);
+    ctx.lineTo(-14, 8);
+    ctx.closePath();
+    ctx.fill();
+    // Faint trailing line for orientation
+    ctx.strokeStyle = `rgba(239, 68, 68, ${(alpha * 0.5).toFixed(3)})`;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(-14, 0);
+    ctx.lineTo(-26, 0);
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
 /* ─── Camera ─────────────────────────────────────────────────────── */
 
 export function applyCamera(
@@ -594,6 +661,13 @@ export function applyCamera(
   dpr: number,
 ): void {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.translate(world.camera.x, world.camera.y);
+  // Random shake offset (in CSS pixels). Visual only — not seeded.
+  let ox = 0;
+  let oy = 0;
+  if (world.shakeIntensity > 0) {
+    ox = (Math.random() - 0.5) * world.shakeIntensity;
+    oy = (Math.random() - 0.5) * world.shakeIntensity;
+  }
+  ctx.translate(world.camera.x + ox, world.camera.y + oy);
   ctx.scale(world.camera.k, world.camera.k);
 }

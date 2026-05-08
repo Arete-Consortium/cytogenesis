@@ -11,6 +11,7 @@ import {
   drawPredators,
   drawSparkles,
   drawAmbientPlankton,
+  drawTelegraphs,
   applyCamera,
 } from "@/game/render";
 import type { TraitState } from "@/game/traits";
@@ -30,6 +31,8 @@ interface FrameStats {
   runStatus: "running" | "transcended" | "dead";
   runDurationMs: number;
   peakCaptured: number;
+  /** True only after the slow-mo transition finishes — overlay can show. */
+  overlayReady: boolean;
 }
 
 const formatDuration = (ms: number): string => {
@@ -62,6 +65,7 @@ export default function GameCanvas() {
     runStatus: "running",
     runDurationMs: 0,
     peakCaptured: 1,
+    overlayReady: false,
   });
 
   useEffect(() => {
@@ -139,25 +143,9 @@ export default function GameCanvas() {
     // Subject returns null for free cells — only entity-graph nodes
     // are draggable. Free cells respond to clicks (lock-on) instead.
     //
-    // Drag pin is capped to MAX_STEER world units past the body. d3
-    // force.fx is a HARD pin — the body teleports to fx each tick — so
-    // the cap is effectively the per-frame max speed. 8wu/tick caps at
-    // ~480wu/sec, which traverses the 3000wu arena in ~6s. 60 was
-    // shipping the entity off-screen ("jets top-left").
-    const MAX_STEER = 8;
-    const applyCappedPin = (body: { x?: number; y?: number; fx?: number | null; fy?: number | null }, tx: number, ty: number) => {
-      const cx = body.x ?? 0;
-      const cy = body.y ?? 0;
-      let dx = tx - cx;
-      let dy = ty - cy;
-      const len = Math.hypot(dx, dy);
-      if (len > MAX_STEER) {
-        dx = (dx / len) * MAX_STEER;
-        dy = (dy / len) * MAX_STEER;
-      }
-      body.fx = cx + dx;
-      body.fy = cy + dy;
-    };
+    // Soft-drag steering: drag updates world.steerTarget; tick applies
+    // a force toward it, capped by MAX_VEL inside applySteerForce.
+    // Body has weight + glide because we lowered velocityDecay to 0.18.
     const drag = d3
       .drag<HTMLCanvasElement, unknown>()
       .container(canvas)
@@ -171,19 +159,17 @@ export default function GameCanvas() {
         if (!event.subject) return;
         draggingId = event.subject.id;
         const w = world.screenToWorld(event.x, event.y);
-        applyCappedPin(event.subject, w.x, w.y);
+        world.steerTarget = { x: w.x, y: w.y, bodyId: event.subject.id };
         world.reheat(0.5);
       })
       .on("drag", (event) => {
         if (!event.subject) return;
         const w = world.screenToWorld(event.x, event.y);
-        applyCappedPin(event.subject, w.x, w.y);
+        world.steerTarget = { x: w.x, y: w.y, bodyId: event.subject.id };
       })
-      .on("end", (event) => {
-        if (!event.subject) return;
-        event.subject.fx = null;
-        event.subject.fy = null;
+      .on("end", () => {
         draggingId = null;
+        world.steerTarget = null;
       });
     selection.call(drag);
 
@@ -269,11 +255,18 @@ export default function GameCanvas() {
       drawPredators(ctx, world);
       drawSparkles(ctx, world);
       ctx.restore();
+      // Telegraphs render on top in screen space so the edge arrows
+      // never clip behind the entity.
+      drawTelegraphs(ctx, world, width, height);
 
       if (t - lastStatPush >= 250) {
         const elapsed = (t - lastStatPush) / 1000;
         const counts = world.countByKind();
         const ended = world.runEndedAtMs ?? world.wallMs;
+        const overlayReady =
+          world.runStatus !== "running" &&
+          world.runEndedAtMs != null &&
+          world.wallMs - world.runEndedAtMs >= 800;
         setStats({
           fps: Math.round(fpsAccum / elapsed),
           ms: Math.round(frameMs * 100) / 100,
@@ -288,10 +281,11 @@ export default function GameCanvas() {
             levels: { ...world.traits.levels },
           },
           lockOnReady: t >= world.lockOnReadyAt,
-          predators: world.predators.length,
+          predators: world.predators.length + world.telegraphs.length,
           runStatus: world.runStatus,
           runDurationMs: ended,
           peakCaptured: world.peakCaptured,
+          overlayReady,
         });
         fpsAccum = 0;
         lastStatPush = t;
@@ -388,7 +382,7 @@ export default function GameCanvas() {
         </div>
       )}
 
-      {stats.runStatus !== "running" && (
+      {stats.overlayReady && (
         <div className="absolute inset-0 z-40 flex flex-col items-center justify-center gap-4 bg-black/70 px-6 backdrop-blur-sm">
           <div
             className={`font-mono text-3xl font-semibold tracking-tight sm:text-4xl ${

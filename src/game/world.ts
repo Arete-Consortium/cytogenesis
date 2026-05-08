@@ -43,6 +43,8 @@ const PREDATOR_FIRST_SPAWN_MS = 8000;
 const PREDATOR_SPAWN_INTERVAL_MS = 5000;
 const PREDATOR_MIN_SPAWN_DISTANCE = 400;
 const MAX_PREDATORS = 5;
+/** Warning window between telegraph appearance and predator materializing. */
+const PREDATOR_TELEGRAPH_MS = 1500;
 /** Free-cell types to sample from when scattering / respawning. */
 const FREE_POOL: NodeTypeId[] = [
   "propulsion",
@@ -103,6 +105,14 @@ export class World {
   coreTrail: { x: number; y: number }[];
   /** Short-lived expanding rings on capture / hit. */
   sparkles: { x: number; y: number; age: number; max: number; hue: string }[];
+  /** Pending predator spawns — drawn as edge arrows during the warning window. */
+  telegraphs: { x: number; y: number; untilMs: number }[];
+  /** Player input: where the dragged body should swim toward. */
+  steerTarget: { x: number; y: number; bodyId: string } | null;
+  /** Visual camera shake — random offset applied during applyCamera, decays per tick. */
+  shakeIntensity: number;
+  /** Accumulator for sub-frame d3 sim ticks during slow-mo. */
+  private simAccum: number;
   private nextPredatorSpawnAt: number;
   private linkForce: d3.ForceLink<Body, Bond>;
 
@@ -136,6 +146,10 @@ export class World {
     this.viewportHeight = 0;
     this.coreTrail = [];
     this.sparkles = [];
+    this.telegraphs = [];
+    this.steerTarget = null;
+    this.shakeIntensity = 0;
+    this.simAccum = 0;
     this.nextPredatorSpawnAt = PREDATOR_FIRST_SPAWN_MS;
 
     this.linkForce = d3
@@ -156,6 +170,9 @@ export class World {
       // steering when traits.speedMul > 0.
       .force("centerX", d3.forceX<Body>(0).strength(0.005))
       .force("centerY", d3.forceY<Body>(0).strength(0.005))
+      // Lower velocity decay so the entity glides through water instead
+      // of stopping the moment input ends.
+      .velocityDecay(0.18)
       .force("collide", d3.forceCollide<Body>((d) => d.radius + 2))
       .force("link", this.linkForce)
       .alphaDecay(0.005)
@@ -223,19 +240,82 @@ export class World {
    * that don't pass a value still behave.
    */
   tick(dtMs = 1000 / 60): void {
-    if (this.runStatus !== "running") return;
+    // Slow-mo lifecycle: when a run ends we keep ticking at scale=0.3
+    // for SLOWMO_MS so the player gets a final dramatic beat before
+    // the overlay snaps in. Tests that flip runStatus directly without
+    // setting runEndedAtMs still see the no-op behavior.
+    let scale = 1;
+    const SLOWMO_MS = 800;
+    if (this.runStatus !== "running") {
+      if (this.runEndedAtMs == null) return;
+      const elapsed = this.wallMs - this.runEndedAtMs;
+      if (elapsed >= SLOWMO_MS) return;
+      scale = 0.3;
+    }
     this.wallMs += dtMs;
-    this.envCA.update(dtMs);
-    this.maybeSpawnPredator();
-    this.applyAutonomousSwim();
-    this.integrateFree();
-    this.integratePredators();
-    this.sim.tick();
-    this.resolveHits();
+    const scaledDt = dtMs * scale;
+    this.envCA.update(scaledDt);
+    if (this.runStatus === "running") {
+      this.maybeSpawnPredator();
+      this.resolveTelegraphs();
+      this.applySteerForce();
+      this.applyAutonomousSwim();
+    }
+    this.integrateFree(scale);
+    this.integratePredators(scale);
+    this.simAccum += scale;
+    while (this.simAccum >= 1) {
+      this.sim.tick();
+      this.simAccum -= 1;
+    }
+    if (this.runStatus === "running") this.resolveHits();
     this.updateCameraFollow();
     this.updateCoreTrail();
     this.updateSparkles();
+    this.decayShake();
     this.tickN += 1;
+  }
+
+  /** Soft-steer: accelerate the dragged body toward steerTarget. */
+  private applySteerForce(): void {
+    if (!this.steerTarget) return;
+    const body = this.entityBodies.find((b) => b.id === this.steerTarget!.bodyId);
+    if (!body) {
+      this.steerTarget = null;
+      return;
+    }
+    // Clear any leftover hard-pin from prior code paths.
+    body.fx = null;
+    body.fy = null;
+    const dx = this.steerTarget.x - (body.x ?? 0);
+    const dy = this.steerTarget.y - (body.y ?? 0);
+    const dist = Math.hypot(dx, dy);
+    if (dist < 0.5) return;
+    // Acceleration scales with distance up to a cap. Combined with
+    // velocityDecay 0.18, equilibrium speed ≈ MAX_ACCEL / 0.18.
+    const MAX_ACCEL = 0.9;
+    const accel = Math.min(dist * 0.06, MAX_ACCEL);
+    body.vx = (body.vx ?? 0) + (dx / dist) * accel;
+    body.vy = (body.vy ?? 0) + (dy / dist) * accel;
+    // Hard cap on velocity so a long drag distance doesn't blow up.
+    const MAX_VEL = 6;
+    const sp = Math.hypot(body.vx ?? 0, body.vy ?? 0);
+    if (sp > MAX_VEL) {
+      body.vx = (body.vx ?? 0) * (MAX_VEL / sp);
+      body.vy = (body.vy ?? 0) * (MAX_VEL / sp);
+    }
+  }
+
+  /** Decay camera shake exponentially. */
+  private decayShake(): void {
+    if (this.shakeIntensity <= 0) return;
+    this.shakeIntensity *= 0.86;
+    if (this.shakeIntensity < 0.15) this.shakeIntensity = 0;
+  }
+
+  /** Inject camera shake; intensity is in screen pixels. */
+  addShake(strength: number): void {
+    this.shakeIntensity = Math.max(this.shakeIntensity, strength);
   }
 
   /** Tell the world how big the viewport is. Camera follow uses this. */
@@ -285,18 +365,33 @@ export class World {
 
   /** Time-gated periodic predator spawn, capped at MAX_PREDATORS. */
   private maybeSpawnPredator(): void {
-    if (this.predators.length >= MAX_PREDATORS) return;
+    if (this.predators.length + this.telegraphs.length >= MAX_PREDATORS) return;
     if (this.wallMs < this.nextPredatorSpawnAt) return;
-    this.predators.push(this.spawnPredator());
+    const pos = this.pickPredatorSpawnPosition();
+    // Push a telegraph; the predator materializes 1.5s later so the
+    // player gets a clear "incoming!" beat.
+    this.telegraphs.push({
+      x: pos.x,
+      y: pos.y,
+      untilMs: this.wallMs + PREDATOR_TELEGRAPH_MS,
+    });
     this.nextPredatorSpawnAt = this.wallMs + PREDATOR_SPAWN_INTERVAL_MS;
   }
 
-  /**
-   * Build a predator at a CA dead zone, bumped outward to keep it from
-   * appearing inside the entity. Velocity starts at 0 — the integrator
-   * picks it up and steers toward the core next tick.
-   */
-  private spawnPredator(): Body {
+  /** Materialize predators whose telegraph window has elapsed. */
+  private resolveTelegraphs(): void {
+    if (this.telegraphs.length === 0) return;
+    for (let i = this.telegraphs.length - 1; i >= 0; i--) {
+      const t = this.telegraphs[i];
+      if (this.wallMs >= t.untilMs) {
+        this.predators.push(this.makePredator(t.x, t.y));
+        this.telegraphs.splice(i, 1);
+      }
+    }
+  }
+
+  /** CA dead zone, bumped outward so predators don't appear on top of the bell. */
+  private pickPredatorSpawnPosition(): { x: number; y: number } {
     const core = this.entityBodies[0];
     const cx = core?.x ?? 0;
     const cy = core?.y ?? 0;
@@ -315,13 +410,17 @@ export class World {
     const a = this.arenaHalf;
     pos.x = Math.max(-a, Math.min(a, pos.x));
     pos.y = Math.max(-a, Math.min(a, pos.y));
+    return pos;
+  }
+
+  private makePredator(x: number, y: number): Body {
     return {
       id: newId("predator"),
-      type: "spore", // placeholder — predator render path doesn't read NODE_COLOR
+      type: "spore",
       kind: "predator",
       radius: PREDATOR_RADIUS,
-      x: pos.x,
-      y: pos.y,
+      x,
+      y,
       vx: 0,
       vy: 0,
     };
@@ -332,7 +431,7 @@ export class World {
    * existing velocity with friction so the player gets a brief
    * breathing window after a hit.
    */
-  private integratePredators(): void {
+  private integratePredators(scale = 1): void {
     if (this.predators.length === 0) return;
     const a = this.arenaHalf;
     const span = a * 2;
@@ -341,8 +440,8 @@ export class World {
     const cy = core?.y ?? 0;
     for (const p of this.predators) {
       if (p.recoilUntil != null && p.recoilUntil > this.tickN) {
-        p.x = (p.x ?? 0) + (p.vx ?? 0);
-        p.y = (p.y ?? 0) + (p.vy ?? 0);
+        p.x = (p.x ?? 0) + (p.vx ?? 0) * scale;
+        p.y = (p.y ?? 0) + (p.vy ?? 0) * scale;
         p.vx = (p.vx ?? 0) * 0.92;
         p.vy = (p.vy ?? 0) * 0.92;
       } else {
@@ -351,8 +450,8 @@ export class World {
         const len = Math.hypot(dx, dy) || 1;
         p.vx = (dx / len) * PREDATOR_SPEED;
         p.vy = (dy / len) * PREDATOR_SPEED;
-        p.x = (p.x ?? 0) + p.vx;
-        p.y = (p.y ?? 0) + p.vy;
+        p.x = (p.x ?? 0) + p.vx * scale;
+        p.y = (p.y ?? 0) + p.vy * scale;
       }
       let x = p.x ?? 0;
       let y = p.y ?? 0;
@@ -395,11 +494,14 @@ export class World {
         if (this.entityBodies.length === 1) {
           this.runStatus = "dead";
           this.runEndedAtMs = this.wallMs;
+          this.addShake(20);
           return;
         }
         // Glancing blow on core while shielded by other captured nodes — recoil only.
+        this.addShake(5);
       } else {
         this.pruneFromGraph(hit);
+        this.addShake(8);
       }
 
       this.emitSparkle(hit.x ?? 0, hit.y ?? 0, "rgba(248, 113, 113,");
@@ -526,7 +628,7 @@ export class World {
    * home toward the core at fixed speed — they get captured on
    * arrival via the normal contact sweep.
    */
-  private integrateFree(): void {
+  private integrateFree(scale = 1): void {
     const a = this.arenaHalf;
     const span = a * 2;
     const core = this.entityBodies[0];
@@ -542,8 +644,8 @@ export class World {
           b.vx = (dx / len) * PULL_SPEED;
           b.vy = (dy / len) * PULL_SPEED;
         }
-        b.x = (b.x ?? 0) + (b.vx ?? 0);
-        b.y = (b.y ?? 0) + (b.vy ?? 0);
+        b.x = (b.x ?? 0) + (b.vx ?? 0) * scale;
+        b.y = (b.y ?? 0) + (b.vy ?? 0) * scale;
         continue;
       }
       let vx = b.vx ?? 0;
@@ -555,8 +657,8 @@ export class World {
         vx = (vx / sp) * MAX_FREE_SPEED;
         vy = (vy / sp) * MAX_FREE_SPEED;
       }
-      let x = (b.x ?? 0) + vx;
-      let y = (b.y ?? 0) + vy;
+      let x = (b.x ?? 0) + vx * scale;
+      let y = (b.y ?? 0) + vy * scale;
       if (x > a) x -= span;
       else if (x < -a) x += span;
       if (y > a) y -= span;
@@ -643,6 +745,7 @@ export class World {
     if (this.entityBodies.length >= TRANSCEND_AT && this.runStatus === "running") {
       this.runStatus = "transcended";
       this.runEndedAtMs = this.wallMs;
+      this.addShake(15);
     }
     this.emitSparkle(free.x ?? 0, free.y ?? 0, "rgba(160, 240, 255,");
     this.reheat(0.4);
