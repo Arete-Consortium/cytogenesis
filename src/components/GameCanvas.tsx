@@ -174,16 +174,30 @@ export default function GameCanvas() {
     let width = 0;
     let height = 0;
 
-    // Thumbstick anchored to bottom-left corner. Always visible.
+    // Thumbstick state — declared up-front so updateStickAnchor (called
+    // from resize on mount) can safely read pointerDownAt without
+    // tripping the TDZ.
+    const STICK_RADIUS = 50;
+    const STICK_ZONE_RADIUS = 75;
+    const TAP_THRESHOLD = 6;
     const ANCHOR_OFFSET = 90;
+    const activePointers = new Set<number>();
+    let pointerDownAt: { x: number; y: number; pointerId: number; isStick: boolean } | null = null;
+
     const updateStickAnchor = () => {
       const ax = ANCHOR_OFFSET;
       const ay = height - ANCHOR_OFFSET;
       world.stickAnchor = { x: ax, y: ay };
-      // Reset knob to centered when no active input.
       if (!pointerDownAt || !pointerDownAt.isStick) {
         world.stickKnob = { x: ax, y: ay };
       }
+    };
+
+    const clearStickInput = () => {
+      if (world.stickAnchor) {
+        world.stickKnob = { x: world.stickAnchor.x, y: world.stickAnchor.y };
+      }
+      world.stickInput = null;
     };
 
     const resize = () => {
@@ -240,27 +254,9 @@ export default function GameCanvas() {
       d3.zoomIdentity.translate(world.camera.x, world.camera.y).scale(world.camera.k),
     );
 
-    // ── thumbstick + tap (single input model) ────────────────────────
-    // pointerdown anywhere anchors a virtual stick at the touch point.
-    // Drag the knob → bell swims in that direction with magnitude
-    // proportional to deflection. Released-without-movement (≤6px) is
-    // a tap; taps on a free cell fire lock-on (when trait active).
-    // Pinch zoom still works via d3.zoom on touch events; multi-touch
-    // here cancels the stick.
-    const STICK_RADIUS = 50;
-    const STICK_ZONE_RADIUS = 75; // forgiving touch around the anchor
-    const TAP_THRESHOLD = 6;
-    const activePointers = new Set<number>();
-    let pointerDownAt: { x: number; y: number; pointerId: number; isStick: boolean } | null = null;
-
-    const clearStickInput = () => {
-      // Anchor stays — always visible. Knob returns to center.
-      if (world.stickAnchor) {
-        world.stickKnob = { x: world.stickAnchor.x, y: world.stickAnchor.y };
-      }
-      world.stickInput = null;
-    };
-
+    // ── thumbstick + tap (anchored bottom-left, single input model) ──
+    // Stick anchor + clearStickInput were declared up-top before resize
+    // so updateStickAnchor can reference pointerDownAt safely.
     const onPointerDown = (e: PointerEvent) => {
       audio.init();
       if (showTutorial) dismissTutorial();
