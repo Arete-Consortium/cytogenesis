@@ -52,3 +52,9 @@ body {
   100% { opacity: 0; transform: translateY(-6px) scale(0.96); }
 }
 .animate-trait-toast { animation: trait-toast 1.7s ease-in-out both; }
+
+@keyframes vignette-pulse {
+  0%, 100% { box-shadow: inset 0 0 90px 14px rgba(220, 38, 38, 0.35); }
+  50%      { box-shadow: inset 0 0 140px 28px rgba(220, 38, 38, 0.55); }
+}
+.animate-vignette-pulse { animation: vignette-pulse 1.1s ease-in-out infinite; }

@@ -63,20 +63,21 @@ describe("World.pruneFromGraph", () => {
 
   it("orphans cascade out: removing the bridge frees both sides", () => {
     const w = new World({ freeCount: 8, seed: "prune-cascade" });
-    // Build core—A—B chain. A is the "bridge"; removing A should
-    // also expel B since B has no bond path to core.
+    // Build core—A—B chain via direct capture so we don't depend on
+    // the captureNearby surface filter (which only lets core + mouths
+    // act as capture surfaces).
     for (const b of w.freeBodies) place(b, 9000, 9000);
     place(w.entityBodies[0], 0, 0);
     const a = w.freeBodies[0];
-    const b = w.freeBodies[1];
     a.type = "membrane";
     a.radius = 10;
+    place(a, 22, 0); // closer to core
+    w.capture(a); // bonds to core
+    const b = w.freeBodies[0]; // a was spliced out
     b.type = "membrane";
     b.radius = 10;
-    place(a, 22, 0);
-    w.captureNearby(); // a bonds to core
-    place(b, 40, 0); // closer to a (18) than to core (40); bonds to a
-    w.captureNearby();
+    place(b, 40, 0); // closer to a (18) than to core (40) → bonds to a
+    w.capture(b);
     expect(w.entityBodies.length).toBe(3);
 
     w.pruneFromGraph(a);

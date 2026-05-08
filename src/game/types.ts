@@ -21,6 +21,8 @@ export interface Vec2 {
  * fx/fy pin a body in place (used during drag). `kind` tags whether the
  * body is part of the player's entity graph or a free-floating cell.
  */
+export type PredatorVariant = "skirmisher" | "brute";
+
 export interface Body extends SimulationNodeDatum {
   id: string;
   type: NodeTypeId;
@@ -30,6 +32,8 @@ export interface Body extends SimulationNodeDatum {
   magnetized?: boolean;
   /** Predator-only: physics tick at which recoil ends and AI resumes. */
   recoilUntil?: number;
+  /** Predator-only: visual + behavior variant. */
+  variant?: PredatorVariant;
 }
 
 /** Camera transform — matches d3.zoomTransform shape (k, x, y). */

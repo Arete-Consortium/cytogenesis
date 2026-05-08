@@ -35,10 +35,13 @@ const MAX_FREE_SPEED = 1.1;
 const JITTER = 0.05;
 /** Captured-node count that ends the run as a transcend (win). */
 const TRANSCEND_AT = 80;
-/** Predator config. */
-const PREDATOR_RADIUS = 14;
-const PREDATOR_SPEED = 0.6;
+/** Predator config — base values; variant-specific values applied at spawn. */
+const PREDATOR_RADIUS_SKIRMISHER = 11;
+const PREDATOR_RADIUS_BRUTE = 20;
+const PREDATOR_SPEED_SKIRMISHER = 0.95;
+const PREDATOR_SPEED_BRUTE = 0.45;
 const PREDATOR_RECOIL_TICKS = 30;
+const PREDATOR_BRUTE_PROB = 0.3;
 const PREDATOR_FIRST_SPAWN_MS = 8000;
 const PREDATOR_SPAWN_INTERVAL_MS = 5000;
 const PREDATOR_MIN_SPAWN_DISTANCE = 400;
@@ -65,7 +68,11 @@ export type WorldEvent =
   | "death"
   | "lockOn"
   | "telegraph"
-  | `trait:${string}`;
+  | `trait:${string}`
+  | `biome:${number}`;
+
+/** Captured-count milestones that trigger a biome flourish. */
+const BIOME_MILESTONES = [20, 40, 60];
 
 export interface WorldConfig {
   /** Number of free cells to scatter at start. Default 200. */
@@ -191,9 +198,11 @@ export class World {
       // steering when traits.speedMul > 0.
       .force("centerX", d3.forceX<Body>(0).strength(0.005))
       .force("centerY", d3.forceY<Body>(0).strength(0.005))
-      // Lower velocity decay so the entity glides through water instead
-      // of stopping the moment input ends.
-      .velocityDecay(0.18)
+      // Velocity decay: 0.22 keeps the bell glide-y but stops it
+      // firmly when the player lets go of the stick. Combined with
+      // applySteerForce's accel=t*1.5 and MAX_VEL=9 this gives ~540
+      // wu/sec top speed (5s arena traversal).
+      .velocityDecay(0.22)
       .force("collide", d3.forceCollide<Body>((d) => d.radius + 2))
       .force("link", this.linkForce)
       .alphaDecay(0.005)
@@ -311,10 +320,10 @@ export class World {
     if (t < 0.05) return;
     core.fx = null;
     core.fy = null;
-    const accel = t * 0.9;
+    const accel = t * 1.5;
     core.vx = (core.vx ?? 0) + ux * accel;
     core.vy = (core.vy ?? 0) + uy * accel;
-    const MAX_VEL = 6;
+    const MAX_VEL = 9;
     const sp = Math.hypot(core.vx ?? 0, core.vy ?? 0);
     if (sp > MAX_VEL) {
       core.vx = (core.vx ?? 0) * (MAX_VEL / sp);
@@ -444,15 +453,18 @@ export class World {
   }
 
   private makePredator(x: number, y: number): Body {
+    const variant = this.rng.next() < PREDATOR_BRUTE_PROB ? "brute" : "skirmisher";
+    const radius = variant === "brute" ? PREDATOR_RADIUS_BRUTE : PREDATOR_RADIUS_SKIRMISHER;
     return {
       id: newId("predator"),
       type: "spore",
       kind: "predator",
-      radius: PREDATOR_RADIUS,
+      radius,
       x,
       y,
       vx: 0,
       vy: 0,
+      variant,
     };
   }
 
@@ -469,6 +481,8 @@ export class World {
     const cx = core?.x ?? 0;
     const cy = core?.y ?? 0;
     for (const p of this.predators) {
+      const speed =
+        p.variant === "brute" ? PREDATOR_SPEED_BRUTE : PREDATOR_SPEED_SKIRMISHER;
       if (p.recoilUntil != null && p.recoilUntil > this.tickN) {
         p.x = (p.x ?? 0) + (p.vx ?? 0) * scale;
         p.y = (p.y ?? 0) + (p.vy ?? 0) * scale;
@@ -478,8 +492,8 @@ export class World {
         const dx = cx - (p.x ?? 0);
         const dy = cy - (p.y ?? 0);
         const len = Math.hypot(dx, dy) || 1;
-        p.vx = (dx / len) * PREDATOR_SPEED;
-        p.vy = (dy / len) * PREDATOR_SPEED;
+        p.vx = (dx / len) * speed;
+        p.vy = (dy / len) * speed;
         p.x = (p.x ?? 0) + p.vx * scale;
         p.y = (p.y ?? 0) + p.vy * scale;
       }
@@ -519,20 +533,21 @@ export class World {
       }
       if (!hit) continue;
 
+      const isBrute = p.variant === "brute";
       const isCore = hit === this.entityBodies[0];
       if (isCore) {
         if (this.entityBodies.length === 1) {
           this.runStatus = "dead";
           this.runEndedAtMs = this.wallMs;
-          this.addShake(20);
+          this.addShake(isBrute ? 28 : 20);
           this.events.push("death");
           return;
         }
-        this.addShake(5);
+        this.addShake(isBrute ? 9 : 5);
         this.events.push("hit");
       } else {
         this.pruneFromGraph(hit);
-        this.addShake(8);
+        this.addShake(isBrute ? 14 : 8);
         this.events.push("hit");
       }
 
@@ -783,6 +798,14 @@ export class World {
     free.magnetized = false;
     this.peakCaptured = Math.max(this.peakCaptured, this.entityBodies.length);
     this.events.push("capture");
+    // Biome milestones — emit on first crossing of each threshold so the
+    // run has visible shape between start and transcend.
+    for (const m of BIOME_MILESTONES) {
+      if (this.entityBodies.length === m) {
+        this.events.push(`biome:${m}` as WorldEvent);
+        this.addShake(8);
+      }
+    }
     if (this.entityBodies.length >= TRANSCEND_AT && this.runStatus === "running") {
       this.runStatus = "transcended";
       this.runEndedAtMs = this.wallMs;
@@ -812,6 +835,10 @@ export class World {
     const toSpawn: Body[] = [];
 
     for (const c of this.entityBodies) {
+      // Only the bell + mouth organelles eat. Other captured cells are
+      // ride-along — the player has to actually steer prey into the
+      // capture surface, which makes mouths tactically meaningful.
+      if (c.type !== "core" && c.type !== "mouth") continue;
       const cx = c.x ?? 0;
       const cy = c.y ?? 0;
       const bonus = this.traits.captureRadiusBonus;

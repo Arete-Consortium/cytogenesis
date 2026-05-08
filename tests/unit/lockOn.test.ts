@@ -9,26 +9,22 @@ const place = (b: Body, x: number, y: number) => {
 
 /**
  * Force a sensor+stinger bonded pair so lock_on becomes active. Uses
- * tight placements that stay inside the contact threshold (sensor
- * radius 8 + stinger radius 8 + pad 2 = 18 units max separation).
+ * world.capture() directly to bypass the captureNearby surface filter
+ * (only core + mouths capture there); we just need the bond topology.
  */
 function withLockOn(world: World): World {
-  // Park every other free cell far away so they don't get swept in.
   for (const b of world.freeBodies) place(b, 9000, 9000);
+  place(world.entityBodies[0], 0, 0);
 
-  place(world.entityBodies[0], 0, 0); // core radius 18
   const sensor = world.freeBodies[0];
   sensor.type = "sensor";
-  place(sensor, 20, 0); // distance 20 < 18+8+2 = 28 → captured by core
-  world.captureNearby();
+  place(sensor, 20, 0);
+  world.capture(sensor); // bonds to core
 
-  // After capture, freeBodies has shifted (one removed + one respawned).
-  // Pick the next still-free cell and convert it to stinger.
-  const stinger = world.freeBodies.find((b) => Math.abs(b.x ?? 0) < 5000)
-    ?? world.freeBodies[0];
+  const stinger = world.freeBodies[0]; // index 0 again — sensor was spliced out
   stinger.type = "stinger";
-  place(stinger, 33, 0); // distance 13 from sensor → captured, bonds to sensor
-  world.captureNearby();
+  place(stinger, 33, 0); // closer to sensor (13) than to core (33) → bonds to sensor
+  world.capture(stinger);
 
   return world;
 }

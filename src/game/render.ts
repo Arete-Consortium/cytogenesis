@@ -549,76 +549,143 @@ export function drawPredators(ctx: CanvasRenderingContext2D, world: World): void
   if (world.predators.length === 0) return;
   const t = world.tickN;
   for (const p of world.predators) {
-    const x = p.x ?? 0;
-    const y = p.y ?? 0;
-    const r = p.radius * 1.25;
-    const recoiling = p.recoilUntil != null && p.recoilUntil > world.tickN;
-    const vx = p.vx ?? 0;
-    const vy = p.vy ?? 0;
-    const angle = Math.atan2(vy, vx) || 0;
-
-    // Danger halo
-    ctx.globalAlpha = recoiling ? 0.4 : 1;
-    const halo = ctx.createRadialGradient(x, y, r * 0.6, x, y, r * 2.6);
-    halo.addColorStop(0, "rgba(220, 38, 38, 0.42)");
-    halo.addColorStop(1, "rgba(220, 38, 38, 0)");
-    ctx.fillStyle = halo;
-    ctx.beginPath();
-    ctx.arc(x, y, r * 2.6, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.save();
-    ctx.translate(x, y);
-    ctx.rotate(angle);
-
-    // Body — dark teardrop pointing forward
-    ctx.fillStyle = recoiling ? "#1c0608" : "#3a0e10";
-    ctx.beginPath();
-    ctx.ellipse(0, 0, r, r * 0.78, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = "rgba(254, 202, 202, 0.45)";
-    ctx.lineWidth = 1.2;
-    ctx.stroke();
-
-    // Tooth row (3 small triangles at the front edge)
-    ctx.fillStyle = "rgba(255, 240, 240, 0.85)";
-    for (let i = -1; i <= 1; i++) {
-      const ty = i * r * 0.32;
-      ctx.beginPath();
-      ctx.moveTo(r * 0.55, ty);
-      ctx.lineTo(r * 0.92, ty - r * 0.1);
-      ctx.lineTo(r * 0.92, ty + r * 0.1);
-      ctx.closePath();
-      ctx.fill();
-    }
-
-    // Eye dot
-    ctx.fillStyle = "rgba(255, 230, 230, 0.85)";
-    ctx.beginPath();
-    ctx.arc(r * 0.25, -r * 0.2, r * 0.1, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Lure: thin line + glowing red dot dangling in front
-    const lurePhase = t * 0.05 + (x + y) * 0.001;
-    const lx = r * 1.45 + Math.sin(lurePhase) * 2.5;
-    const ly = -r * 0.55 + Math.cos(lurePhase) * 2.5;
-    ctx.strokeStyle = "rgba(120, 30, 30, 0.7)";
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(0, -r * 0.55);
-    ctx.quadraticCurveTo(r * 0.7, -r * 0.85, lx, ly);
-    ctx.stroke();
-    const lureGlow = ctx.createRadialGradient(lx, ly, 0, lx, ly, r * 0.65);
-    lureGlow.addColorStop(0, "rgba(255, 120, 120, 0.95)");
-    lureGlow.addColorStop(1, "rgba(255, 80, 80, 0)");
-    ctx.fillStyle = lureGlow;
-    ctx.beginPath();
-    ctx.arc(lx, ly, r * 0.65, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.restore();
-    ctx.globalAlpha = 1;
+    if (p.variant === "brute") drawBrutePredator(ctx, p, t);
+    else drawSkirmisherPredator(ctx, p, t);
   }
+}
+
+function drawSkirmisherPredator(
+  ctx: CanvasRenderingContext2D,
+  p: Body,
+  t: number,
+): void {
+  const x = p.x ?? 0;
+  const y = p.y ?? 0;
+  const r = p.radius * 1.25;
+  const recoiling = p.recoilUntil != null && p.recoilUntil > t;
+  const angle = Math.atan2(p.vy ?? 0, p.vx ?? 0) || 0;
+
+  ctx.globalAlpha = recoiling ? 0.4 : 1;
+  const halo = ctx.createRadialGradient(x, y, r * 0.6, x, y, r * 2.6);
+  halo.addColorStop(0, "rgba(220, 38, 38, 0.42)");
+  halo.addColorStop(1, "rgba(220, 38, 38, 0)");
+  ctx.fillStyle = halo;
+  ctx.beginPath();
+  ctx.arc(x, y, r * 2.6, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angle);
+  // Dart-like teardrop body
+  ctx.fillStyle = recoiling ? "#1c0608" : "#3a0e10";
+  ctx.beginPath();
+  ctx.ellipse(0, 0, r, r * 0.7, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(254, 202, 202, 0.45)";
+  ctx.lineWidth = 1.2;
+  ctx.stroke();
+  // 3 sharp front teeth
+  ctx.fillStyle = "rgba(255, 240, 240, 0.85)";
+  for (let i = -1; i <= 1; i++) {
+    const ty = i * r * 0.32;
+    ctx.beginPath();
+    ctx.moveTo(r * 0.55, ty);
+    ctx.lineTo(r * 0.92, ty - r * 0.1);
+    ctx.lineTo(r * 0.92, ty + r * 0.1);
+    ctx.closePath();
+    ctx.fill();
+  }
+  // Eye
+  ctx.fillStyle = "rgba(255, 230, 230, 0.85)";
+  ctx.beginPath();
+  ctx.arc(r * 0.25, -r * 0.2, r * 0.1, 0, Math.PI * 2);
+  ctx.fill();
+  // Lure
+  const lurePhase = t * 0.05 + (x + y) * 0.001;
+  const lx = r * 1.45 + Math.sin(lurePhase) * 2.5;
+  const ly = -r * 0.55 + Math.cos(lurePhase) * 2.5;
+  ctx.strokeStyle = "rgba(120, 30, 30, 0.7)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(0, -r * 0.55);
+  ctx.quadraticCurveTo(r * 0.7, -r * 0.85, lx, ly);
+  ctx.stroke();
+  const lureGlow = ctx.createRadialGradient(lx, ly, 0, lx, ly, r * 0.65);
+  lureGlow.addColorStop(0, "rgba(255, 120, 120, 0.95)");
+  lureGlow.addColorStop(1, "rgba(255, 80, 80, 0)");
+  ctx.fillStyle = lureGlow;
+  ctx.beginPath();
+  ctx.arc(lx, ly, r * 0.65, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+  ctx.globalAlpha = 1;
+}
+
+/**
+ * Brute: thicker, darker, more menacing. Wider body with multiple
+ * tooth rows + faint chitin segmentation. Slow but lethal.
+ */
+function drawBrutePredator(
+  ctx: CanvasRenderingContext2D,
+  p: Body,
+  t: number,
+): void {
+  const x = p.x ?? 0;
+  const y = p.y ?? 0;
+  const r = p.radius * 1.15;
+  const recoiling = p.recoilUntil != null && p.recoilUntil > t;
+  const angle = Math.atan2(p.vy ?? 0, p.vx ?? 0) || 0;
+
+  ctx.globalAlpha = recoiling ? 0.4 : 1;
+  // Bigger, darker halo
+  const halo = ctx.createRadialGradient(x, y, r * 0.7, x, y, r * 2.8);
+  halo.addColorStop(0, "rgba(180, 20, 20, 0.5)");
+  halo.addColorStop(1, "rgba(180, 20, 20, 0)");
+  ctx.fillStyle = halo;
+  ctx.beginPath();
+  ctx.arc(x, y, r * 2.8, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angle);
+  // Bulky body — wider, almost circular
+  ctx.fillStyle = recoiling ? "#0e0303" : "#1f0507";
+  ctx.beginPath();
+  ctx.ellipse(0, 0, r, r * 0.95, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(254, 130, 130, 0.6)";
+  ctx.lineWidth = 1.6;
+  ctx.stroke();
+  // Chitin segmentation — 3 darker arcs across the body
+  ctx.strokeStyle = "rgba(0, 0, 0, 0.55)";
+  ctx.lineWidth = 1.2;
+  for (let i = -1; i <= 1; i++) {
+    ctx.beginPath();
+    ctx.arc(i * r * 0.25, 0, r * 0.85, -Math.PI * 0.4, Math.PI * 0.4);
+    ctx.stroke();
+  }
+  // 5 jagged front teeth
+  ctx.fillStyle = "rgba(255, 240, 240, 0.9)";
+  for (let i = -2; i <= 2; i++) {
+    const ty = i * r * 0.22;
+    ctx.beginPath();
+    ctx.moveTo(r * 0.5, ty);
+    ctx.lineTo(r * 0.96, ty - r * 0.09);
+    ctx.lineTo(r * 0.96, ty + r * 0.09);
+    ctx.closePath();
+    ctx.fill();
+  }
+  // Two eye dots — upper + lower
+  ctx.fillStyle = "rgba(255, 220, 220, 0.85)";
+  for (const ey of [-r * 0.32, r * 0.32]) {
+    ctx.beginPath();
+    ctx.arc(r * 0.18, ey, r * 0.09, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+  ctx.globalAlpha = 1;
 }
 
 /* ─── Sparkles ───────────────────────────────────────────────────── */

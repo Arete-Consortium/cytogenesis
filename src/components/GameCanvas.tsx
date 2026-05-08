@@ -80,9 +80,8 @@ export default function GameCanvas() {
     overlayReady: false,
   });
 
-  // Helper accessible inside the rAF loop to push a trait-unlock toast.
-  const queueToast = (id: string) => {
-    const text = TRAIT_LABEL[id]?.toUpperCase() ?? id.toUpperCase();
+  // Helper accessible inside the rAF loop to push a centered toast.
+  const queueToast = (text: string) => {
     const toast: Toast = {
       id: nextToastId++,
       text,
@@ -323,7 +322,11 @@ export default function GameCanvas() {
           else if (typeof ev === "string" && ev.startsWith("trait:")) {
             audio.trait();
             const id = ev.slice("trait:".length);
-            queueToast(id);
+            queueToast(TRAIT_LABEL[id]?.toUpperCase() ?? id.toUpperCase());
+          }
+          else if (typeof ev === "string" && ev.startsWith("biome:")) {
+            audio.transcend(); // re-use the chord — feels milestone-y
+            queueToast(`DEPTH ${ev.slice("biome:".length)}`);
           }
         }
         world.events.length = 0;
@@ -431,6 +434,11 @@ export default function GameCanvas() {
           </div>
         )}
       </div>
+
+      {/* Near-death warning: pulsing red vignette when stripped to core. */}
+      {stats.captured === 1 && stats.runStatus === "running" && (
+        <div className="pointer-events-none absolute inset-0 z-10 animate-vignette-pulse" />
+      )}
 
       {/* Predator warning: only when one is on the field. */}
       {stats.predators > 0 && (
