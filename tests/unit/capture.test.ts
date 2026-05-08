@@ -59,7 +59,7 @@ describe("World.capture (absorb-counter model)", () => {
     expect(w.evolutionStage).toBe(1);
   });
 
-  it("transcend event fires at 80 absorbed (run continues — endless mode)", () => {
+  it("biome milestones fire as you cross thresholds (run stays endless)", () => {
     const w = new World({ freeCount: 1, seed: "transcend" });
     place(w.entityBodies[0], 0, 0);
     for (let i = 0; i < 80; i++) {
@@ -75,9 +75,13 @@ describe("World.capture (absorb-counter model)", () => {
       };
       w.freeBodies.push(f);
       w.capture(f);
+      // Clear any boss spawned by the milestone so the test can keep
+      // crossing thresholds — checkMilestones is now boss-gated.
+      w.predators.length = 0;
     }
     expect(w.totalAbsorbed).toBeGreaterThanOrEqual(80);
-    expect(w.runStatus).toBe("running"); // endless mode — transcend is a milestone, not run-end
-    expect(w.events).toContain("transcend");
+    expect(w.runStatus).toBe("running"); // endless mode — never ends on absorb count
+    // At least the first biome milestone should have fired during the loop.
+    expect(w.events.some((e) => e === "biome:20")).toBe(true);
   });
 });
