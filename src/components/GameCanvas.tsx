@@ -72,12 +72,16 @@ export default function GameCanvas() {
     let hoveredId: string | null = null;
     let draggingId: string | null = null;
 
-    let dpr = window.devicePixelRatio || 1;
+    // Cap DPR at 2 — phones with 3× displays (recent iPhones, Pixel Pros)
+    // double the pixel work for negligible visual gain on a free-floating
+    // particle scene. Keeps mobile fps comfortable.
+    const computeDpr = () => Math.min(window.devicePixelRatio || 1, 2);
+    let dpr = computeDpr();
     let width = 0;
     let height = 0;
 
     const resize = () => {
-      dpr = window.devicePixelRatio || 1;
+      dpr = computeDpr();
       width = canvas.clientWidth;
       height = canvas.clientHeight;
       canvas.width = Math.floor(width * dpr);
@@ -89,6 +93,8 @@ export default function GameCanvas() {
     };
     resize();
     window.addEventListener("resize", resize);
+    // iOS rotates / collapses the address bar without firing a resize.
+    window.addEventListener("orientationchange", resize);
 
     // ── d3.zoom ──────────────────────────────────────────────────────
     const selection = d3.select<HTMLCanvasElement, unknown>(canvas);
@@ -97,9 +103,13 @@ export default function GameCanvas() {
       .scaleExtent([0.3, 4])
       .filter((event) => {
         if (draggingId !== null) return false;
-        // Block zoom if the pointer landed on a captured (draggable)
-        // body. Free cells / empty space → allow pan.
-        if (event.type === "mousedown" || event.type === "touchstart") {
+        // Block zoom if the gesture started on a captured (draggable)
+        // body. Free cells / empty space → allow pan or pinch.
+        if (
+          event.type === "mousedown" ||
+          event.type === "touchstart" ||
+          event.type === "pointerdown"
+        ) {
           const rect = canvas.getBoundingClientRect();
           const sx = (event.clientX ?? event.touches?.[0]?.clientX ?? 0) - rect.left;
           const sy = (event.clientY ?? event.touches?.[0]?.clientY ?? 0) - rect.top;
@@ -154,19 +164,21 @@ export default function GameCanvas() {
       });
     selection.call(drag);
 
-    // ── click → lock-on ──────────────────────────────────────────────
-    // Custom click detection so a small zoom-pan doesn't fire a
-    // spurious lock-on. 5px threshold separates click from drag/pan.
-    let pointerDownAt: { x: number; y: number } | null = null;
-    const onMouseDown = (e: MouseEvent) => {
-      pointerDownAt = { x: e.clientX, y: e.clientY };
+    // ── tap → lock-on ────────────────────────────────────────────────
+    // Pointer events so this works for mouse + touch + pen uniformly.
+    // Filter to primary so a pinch-zoom's second finger can't fire a
+    // spurious tap. 6px threshold separates a tap from a drag/pan.
+    let pointerDownAt: { x: number; y: number; pointerId: number } | null = null;
+    const onPointerDown = (e: PointerEvent) => {
+      if (!e.isPrimary) return;
+      pointerDownAt = { x: e.clientX, y: e.clientY, pointerId: e.pointerId };
     };
-    const onMouseUp = (e: MouseEvent) => {
+    const onPointerUp = (e: PointerEvent) => {
+      if (!pointerDownAt || pointerDownAt.pointerId !== e.pointerId) return;
       const start = pointerDownAt;
       pointerDownAt = null;
-      if (!start) return;
       const moved = Math.hypot(e.clientX - start.x, e.clientY - start.y);
-      if (moved > 5) return; // it was a drag/pan
+      if (moved > 6) return; // drag / pan / pinch
       if (world.traits.lockOnRange <= 0) return;
       const rect = canvas.getBoundingClientRect();
       const w = world.screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
@@ -174,11 +186,20 @@ export default function GameCanvas() {
       if (!hit || hit.kind !== "free") return;
       world.lockOn(hit, performance.now());
     };
-    canvas.addEventListener("mousedown", onMouseDown, true);
-    canvas.addEventListener("mouseup", onMouseUp, true);
+    const onPointerCancel = () => {
+      pointerDownAt = null;
+    };
+    canvas.addEventListener("pointerdown", onPointerDown, true);
+    canvas.addEventListener("pointerup", onPointerUp, true);
+    canvas.addEventListener("pointercancel", onPointerCancel, true);
 
-    // ── hover (cursor feedback) ──────────────────────────────────────
-    const onMove = (e: MouseEvent) => {
+    // Block long-press context menu on the canvas — interferes with drags.
+    const onContext = (e: Event) => e.preventDefault();
+    canvas.addEventListener("contextmenu", onContext);
+
+    // ── hover (cursor feedback — mouse only) ─────────────────────────
+    const onMove = (e: PointerEvent) => {
+      if (e.pointerType === "touch") return; // no hover on touch
       const rect = canvas.getBoundingClientRect();
       const sx = e.clientX - rect.left;
       const sy = e.clientY - rect.top;
@@ -190,14 +211,12 @@ export default function GameCanvas() {
       } else if (hit.kind === "captured") {
         canvas.style.cursor = "grab";
       } else if (world.traits.lockOnRange > 0) {
-        // Crosshair when lock-on is available, even if target is out
-        // of range — feedback comes from the click attempt.
         canvas.style.cursor = "crosshair";
       } else {
         canvas.style.cursor = "default";
       }
     };
-    canvas.addEventListener("mousemove", onMove);
+    canvas.addEventListener("pointermove", onMove);
 
     // ── rAF loop ─────────────────────────────────────────────────────
     let raf = 0;
@@ -259,9 +278,12 @@ export default function GameCanvas() {
     return () => {
       cancelAnimationFrame(raf);
       window.removeEventListener("resize", resize);
-      canvas.removeEventListener("mousemove", onMove);
-      canvas.removeEventListener("mousedown", onMouseDown, true);
-      canvas.removeEventListener("mouseup", onMouseUp, true);
+      window.removeEventListener("orientationchange", resize);
+      canvas.removeEventListener("pointermove", onMove);
+      canvas.removeEventListener("pointerdown", onPointerDown, true);
+      canvas.removeEventListener("pointerup", onPointerUp, true);
+      canvas.removeEventListener("pointercancel", onPointerCancel, true);
+      canvas.removeEventListener("contextmenu", onContext);
       selection.on(".zoom", null).on(".drag", null);
       world.dispose();
     };
@@ -274,10 +296,18 @@ export default function GameCanvas() {
   return (
     <div className="relative h-full w-full">
       <canvas ref={canvasRef} className="absolute inset-0 h-full w-full touch-none select-none" />
-      <div className="pointer-events-none absolute left-3 top-3 rounded bg-black/40 px-2 py-1 font-mono text-[11px] leading-4 text-zinc-300 backdrop-blur">
-        <div className="text-zinc-100">{formatDuration(stats.runDurationMs)} · peak {stats.peakCaptured}</div>
-        <div>fps {stats.fps}</div>
-        <div>frame {stats.ms} ms</div>
+      <div
+        className="pointer-events-none absolute left-2 top-2 max-w-[60vw] rounded bg-black/45 px-2 py-1 font-mono text-[10px] leading-tight text-zinc-300 backdrop-blur sm:left-3 sm:top-3 sm:text-[11px] sm:leading-4"
+        style={{
+          top: "max(0.5rem, env(safe-area-inset-top))",
+          left: "max(0.5rem, env(safe-area-inset-left))",
+        }}
+      >
+        <div className="text-zinc-100">
+          {formatDuration(stats.runDurationMs)} · peak {stats.peakCaptured}
+        </div>
+        <div className="hidden sm:block">fps {stats.fps}</div>
+        <div className="hidden sm:block">frame {stats.ms} ms</div>
         <div>
           <span className="text-cyan-300">captured {stats.captured}</span>
           <span className="text-zinc-500"> / </span>
@@ -290,7 +320,13 @@ export default function GameCanvas() {
         </div>
       </div>
 
-      <div className="pointer-events-none absolute right-3 top-3 w-44 rounded bg-black/40 px-2 py-1 font-mono text-[11px] leading-4 text-zinc-300 backdrop-blur">
+      <div
+        className="pointer-events-none absolute right-2 z-10 w-36 rounded bg-black/45 px-2 py-1 font-mono text-[10px] leading-tight text-zinc-300 backdrop-blur sm:right-3 sm:w-44 sm:text-[11px] sm:leading-4"
+        style={{
+          top: "calc(max(0.5rem, env(safe-area-inset-top)) + 3rem)",
+          right: "max(0.5rem, env(safe-area-inset-right))",
+        }}
+      >
         <div className="mb-1 text-[10px] uppercase tracking-wider text-zinc-500">traits</div>
         {traitList.length === 0 ? (
           <div className="text-zinc-600">— none yet —</div>
@@ -298,25 +334,33 @@ export default function GameCanvas() {
           traitList.map((id) => (
             <div key={id} className="flex justify-between">
               <span>{TRAIT_LABEL[id] ?? id}</span>
-              <span className="text-zinc-500">×{stats.traits.levels[id as keyof typeof stats.traits.levels]}</span>
+              <span className="text-zinc-500">
+                ×{stats.traits.levels[id as keyof typeof stats.traits.levels]}
+              </span>
             </div>
           ))
         )}
         {stats.traits.lockOnRange > 0 && (
           <div className="mt-1 border-t border-zinc-700 pt-1 text-[10px] text-zinc-500">
-            click prey to pull · {stats.lockOnReady ? "ready" : "cooling"}
+            tap prey to pull · {stats.lockOnReady ? "ready" : "cooling"}
           </div>
         )}
       </div>
 
-      <div className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 rounded bg-black/40 px-3 py-1 font-mono text-[10px] text-zinc-400 backdrop-blur">
-        drag a captured cell · scroll to zoom · drag empty space to pan
+      <div
+        className="pointer-events-none absolute bottom-2 left-1/2 max-w-[92vw] -translate-x-1/2 rounded bg-black/45 px-3 py-1 text-center font-mono text-[10px] text-zinc-400 backdrop-blur sm:bottom-3"
+        style={{
+          bottom: "max(0.5rem, env(safe-area-inset-bottom))",
+        }}
+      >
+        <span className="hidden sm:inline">drag a captured cell · scroll to zoom · drag empty space to pan</span>
+        <span className="sm:hidden">drag captured · pinch to zoom · drag empty to pan</span>
       </div>
 
       {stats.runStatus !== "running" && (
-        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-4 bg-black/70 backdrop-blur-sm">
+        <div className="absolute inset-0 z-40 flex flex-col items-center justify-center gap-4 bg-black/70 px-6 backdrop-blur-sm">
           <div
-            className={`font-mono text-4xl font-semibold tracking-tight ${
+            className={`font-mono text-3xl font-semibold tracking-tight sm:text-4xl ${
               stats.runStatus === "transcended" ? "text-cyan-300" : "text-red-400"
             }`}
           >
@@ -327,7 +371,7 @@ export default function GameCanvas() {
           </div>
           <button
             onClick={restart}
-            className="mt-2 rounded-full border border-zinc-600 px-6 py-2 font-mono text-sm text-zinc-100 transition-colors hover:bg-zinc-800"
+            className="mt-2 inline-flex h-12 min-w-[180px] items-center justify-center rounded-full border border-zinc-600 px-6 font-mono text-sm text-zinc-100 transition-colors hover:bg-zinc-800 active:bg-zinc-900"
           >
             Begin again →
           </button>
