@@ -7,7 +7,6 @@ import {
   drawBackground,
   drawBodies,
   drawBonds,
-  drawEnvCA,
   drawPredators,
   drawSparkles,
   drawAmbientPlankton,
@@ -186,8 +185,11 @@ export default function GameCanvas() {
     let pointerDownAt: { x: number; y: number; pointerId: number; isStick: boolean } | null = null;
 
     const updateStickAnchor = () => {
+      // Anchor in CSS pixels relative to canvas. Use the live canvas
+      // client dimensions (not cached `height`) to be robust against
+      // resize-timing issues that put the stick mid-screen.
       const ax = ANCHOR_OFFSET;
-      const ay = height - ANCHOR_OFFSET;
+      const ay = canvas.clientHeight - ANCHOR_OFFSET;
       world.stickAnchor = { x: ax, y: ay };
       if (!pointerDownAt || !pointerDownAt.isStick) {
         world.stickKnob = { x: ax, y: ay };
@@ -397,7 +399,9 @@ export default function GameCanvas() {
       drawAmbientPlankton(ctx, width, height, world.tickN);
       ctx.save();
       applyCamera(ctx, world, dpr);
-      drawEnvCA(ctx, world);
+      // Env CA underlay disabled — was creating rectangular dark
+      // artifacts on some devices. CA logic still drives spawn
+      // density.
       drawBonds(ctx, world);
       drawBodies(ctx, world, hoveredId, draggingId);
       drawPredators(ctx, world);
