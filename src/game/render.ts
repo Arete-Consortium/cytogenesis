@@ -19,44 +19,16 @@ export function drawBackground(
   ctx: CanvasRenderingContext2D,
   width: number,
   height: number,
-  tickN = 0,
+  _tickN = 0,
   biomeStage = 0,
 ): void {
   const T = currentTheme();
-  // Darken progressively as the player descends through biome milestones.
-  const dark = 1 - Math.min(biomeStage, 3) * 0.18;
-  const depth = ctx.createLinearGradient(0, 0, 0, height);
-  depth.addColorStop(0, darkenHex(T.bg[0], dark));
-  depth.addColorStop(0.45, darkenHex(T.bg[1], dark));
-  depth.addColorStop(1, darkenHex(T.bg[2], dark));
-  ctx.fillStyle = depth;
+  // Flat bg tonally matched to the CA bloom. Uniform so any area
+  // without CA contribution still reads as ocean, never as a void.
+  // Biome stages still darken the whole canvas for depth feel.
+  const dark = 1 - Math.min(biomeStage, 3) * 0.15;
+  ctx.fillStyle = darkenHex(T.bgFlat, dark);
   ctx.fillRect(0, 0, width, height);
-
-  // Always-on faint haze so the bg never reads as a void where the
-  // env-CA underlay happens to be dim. Theme-tinted via T.ca.
-  ctx.fillStyle = `rgba(${T.ca.r}, ${T.ca.g}, ${T.ca.b}, 0.07)`;
-  ctx.fillRect(0, 0, width, height);
-
-  // Two soft shafts of light, drifting slowly.
-  const shaftCount = 2;
-  for (let i = 0; i < shaftCount; i++) {
-    const seed = i * 137.5;
-    const drift = (tickN * 0.18 + seed) % (width + 200);
-    const x = drift - 100;
-    const w = 220;
-    const grad = ctx.createLinearGradient(x, 0, x + w * 0.6, height);
-    grad.addColorStop(0, `${T.shaft} 0.06)`);
-    grad.addColorStop(0.6, `${T.shaft} 0.02)`);
-    grad.addColorStop(1, `${T.shaft} 0)`);
-    ctx.fillStyle = grad;
-    ctx.beginPath();
-    ctx.moveTo(x, 0);
-    ctx.lineTo(x + w, 0);
-    ctx.lineTo(x + w * 0.65, height);
-    ctx.lineTo(x - w * 0.35, height);
-    ctx.closePath();
-    ctx.fill();
-  }
 }
 
 /**
@@ -955,37 +927,37 @@ export function drawTracers(ctx: CanvasRenderingContext2D, world: World): void {
 /* ─── Thumbstick overlay (screen space) ──────────────────────────── */
 
 /**
- * Floating thumbstick: anchor ring + knob. Drawn after applyCamera
- * restores the identity transform so coordinates are in CSS pixels.
+ * Anchored thumbstick at the bottom-left corner. Drawn brighter than
+ * before so it stays readable against the flat ocean bg.
  */
 export function drawThumbstick(ctx: CanvasRenderingContext2D, world: World): void {
   if (!world.stickAnchor || !world.stickKnob) return;
   const a = world.stickAnchor;
   const k = world.stickKnob;
-  // Anchor outer ring
-  ctx.strokeStyle = "rgba(64, 220, 255, 0.45)";
-  ctx.lineWidth = 2.5;
+  const engaged = !!world.stickInput;
+  // Anchor outer ring — brighter when engaged
+  ctx.fillStyle = "rgba(8, 30, 50, 0.5)";
   ctx.beginPath();
   ctx.arc(a.x, a.y, 50, 0, Math.PI * 2);
-  ctx.stroke();
-  // Faint inner fill so it reads against any background
-  ctx.fillStyle = "rgba(8, 30, 50, 0.35)";
   ctx.fill();
+  ctx.strokeStyle = engaged ? "rgba(96, 240, 255, 0.85)" : "rgba(64, 220, 255, 0.7)";
+  ctx.lineWidth = 2.5;
+  ctx.stroke();
   // Knob halo
-  const knobHalo = ctx.createRadialGradient(k.x, k.y, 0, k.x, k.y, 30);
-  knobHalo.addColorStop(0, "rgba(96, 240, 255, 0.55)");
+  const knobHalo = ctx.createRadialGradient(k.x, k.y, 0, k.x, k.y, 32);
+  knobHalo.addColorStop(0, "rgba(96, 240, 255, 0.6)");
   knobHalo.addColorStop(1, "rgba(64, 220, 255, 0)");
   ctx.fillStyle = knobHalo;
   ctx.beginPath();
-  ctx.arc(k.x, k.y, 30, 0, Math.PI * 2);
+  ctx.arc(k.x, k.y, 32, 0, Math.PI * 2);
   ctx.fill();
   // Knob body
-  ctx.fillStyle = "rgba(64, 220, 255, 0.85)";
+  ctx.fillStyle = engaged ? "rgba(160, 250, 255, 0.95)" : "rgba(64, 220, 255, 0.92)";
   ctx.beginPath();
   ctx.arc(k.x, k.y, 18, 0, Math.PI * 2);
   ctx.fill();
   // Knob highlight
-  ctx.fillStyle = "rgba(220, 252, 255, 0.55)";
+  ctx.fillStyle = "rgba(255, 255, 255, 0.7)";
   ctx.beginPath();
   ctx.arc(k.x - 5, k.y - 5, 6, 0, Math.PI * 2);
   ctx.fill();

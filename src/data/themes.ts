@@ -14,6 +14,12 @@ export interface Theme {
   name: string;
   /** Vertical bg gradient stops (top → bottom). */
   bg: [string, string, string];
+  /**
+   * Flat bg color tonally matched to the env-CA bloom — used as a
+   * uniform fill so areas without CA contribution don't read as
+   * "voids" against a contrasting gradient.
+   */
+  bgFlat: string;
   /** Drifting plankton / starlight motes. rgba prefix; alpha appended at draw. */
   ambient: string;
   /** Light shaft tint. rgba prefix; alpha appended. */
@@ -77,6 +83,7 @@ const AQUATIC: Theme = {
   id: "aquatic",
   name: "Aquatic",
   bg: ["#0c2440", "#061a30", "#020812"],
+  bgFlat: "#0e2c2f",
   ambient: "rgba(190, 230, 255,",
   shaft: "rgba(180, 220, 255,",
   ca: { r: 96, g: 200, b: 190, a: 28 },
@@ -137,6 +144,7 @@ const GALACTIC: Theme = {
   id: "galactic",
   name: "Galactic",
   bg: ["#1c0f3d", "#0a0530", "#020010"],
+  bgFlat: "#221530",
   ambient: "rgba(255, 240, 220,",
   shaft: "rgba(220, 200, 255,",
   ca: { r: 255, g: 170, b: 80, a: 24 },
