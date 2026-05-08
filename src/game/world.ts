@@ -295,6 +295,29 @@ const CURIOSITY_BY_TYPE: Record<NodeTypeId, number> = {
 const TEMPO_AMPLITUDE = 0.35;
 const TEMPO_RATE = 0.035;
 
+/** Currents — sum of a slowly-rotating sin/cos vector field over the
+ *  arena. Adds organic drift; cells pool in eddies that migrate over
+ *  time so no part of the arena stays permanently dead. The player
+ *  also feels a fraction of the current. */
+const CURRENT_STRENGTH = 0.05;
+const CURRENT_SPATIAL = 0.0014;
+const CURRENT_TIME = 0.00012;
+/** Slow field rotation so eddies migrate across the arena. */
+const CURRENT_ROTATION = 0.000018;
+/** Fraction of the current the player feels — atmosphere without
+ *  fighting the thumbstick. */
+const CURRENT_PLAYER_MUL = 0.35;
+
+/** Spawn cradles — visible biological hotspots per arena. New cells
+ *  emit from cradles instead of the void, so the arena has geography.
+ *  Cradle picks bias TOWARD their preferred type but still roll the
+ *  biome distribution often enough to keep depth flavor.  */
+const CRADLE_COUNT = 3;
+const CRADLE_RADIUS = 56;
+/** Probability a cradle spawn uses the cradle's own type vs.
+ *  rolling the biome composition. */
+const CRADLE_TYPE_LOYALTY = 0.6;
+
 /** Free-cell flocking — boids-style alignment/cohesion/separation.
  *  Same-species cells school; separation applies across all types so
  *  different species don't clip through each other. */
@@ -394,6 +417,8 @@ export class World {
   wallMs: number;
   /** Player-toggled pause. tick early-returns when true. */
   paused: boolean;
+  /** Spawn cradles — visible biological hotspots that pulse and emit cells. */
+  cradles: { x: number; y: number; type: NodeTypeId; phase: number }[];
   /** Body-editor — open between stages while the player picks/places a part. */
   editor: EditorState;
   /** Parts the player has attached to the bell this run (visible forever). */
@@ -519,6 +544,24 @@ export class World {
     };
     this.placedParts = [];
     this.lastDamageTickN = -9999;
+    // Seed cradles — random positions inside 70% of the arena so they
+    // aren't pinned at the wrap edges. Each gets a preferred type
+    // drawn from a small palette of "biological hotspot" archetypes.
+    const cradleTypes: NodeTypeId[] = [
+      "chloroplast",
+      "propulsion",
+      "sensor",
+      "spore",
+    ];
+    this.cradles = [];
+    for (let i = 0; i < CRADLE_COUNT; i++) {
+      this.cradles.push({
+        x: this.rng.range(-this.arenaHalf * 0.7, this.arenaHalf * 0.7),
+        y: this.rng.range(-this.arenaHalf * 0.7, this.arenaHalf * 0.7),
+        type: this.rng.pick(cradleTypes),
+        phase: this.rng.range(0, Math.PI * 2),
+      });
+    }
     this.biomeStage = 0;
     this.bossesDefeated = 0;
     this.nextMilestoneIndex = 0;
@@ -608,13 +651,26 @@ export class World {
     return FREE_POOL[FREE_POOL.length - 1];
   }
 
-  private spawnFree(opts: { onEdge?: boolean; biasToAlive?: boolean } = {}): Body {
-    const type = this.pickBiomeType();
+  private spawnFree(opts: { onEdge?: boolean; biasToAlive?: boolean; fromCradle?: boolean } = {}): Body {
     const a = this.arenaHalf;
     let x: number;
     let y: number;
+    let type = this.pickBiomeType();
 
-    if (opts.biasToAlive) {
+    // Cradle spawn — preferred path during ecology refill so cells
+    // emit from visible biological hotspots, not the void.
+    const useCradle =
+      opts.fromCradle && this.cradles && this.cradles.length > 0;
+    if (useCradle) {
+      const c = this.rng.pick(this.cradles);
+      const angle = this.rng.range(0, Math.PI * 2);
+      const r = this.rng.range(0, CRADLE_RADIUS * 0.85);
+      x = c.x + Math.cos(angle) * r;
+      y = c.y + Math.sin(angle) * r;
+      // Mostly emit the cradle's preferred type; sometimes roll the
+      // biome distribution so deeper biomes still vary the soup.
+      if (this.rng.next() < CRADLE_TYPE_LOYALTY) type = c.type;
+    } else if (opts.biasToAlive) {
       const live = this.envCA?.pickAliveWorldPos(this.rng);
       if (live) {
         x = live.x;
@@ -699,9 +755,14 @@ export class World {
    * with weight instead of stop-on-release.
    */
   private applySteerForce(): void {
-    if (!this.stickInput) return;
     const core = this.entityBodies[0];
     if (!core) return;
+    // Player feels a fraction of the current at all times — adds
+    // atmosphere without overpowering the thumbstick.
+    const cur = this.currentAt(core.x ?? 0, core.y ?? 0);
+    core.vx = (core.vx ?? 0) + cur.x * CURRENT_PLAYER_MUL;
+    core.vy = (core.vy ?? 0) + cur.y * CURRENT_PLAYER_MUL;
+    if (!this.stickInput) return;
     const { ux, uy, t } = this.stickInput;
     if (t < 0.05) return;
     core.fx = null;
@@ -1570,6 +1631,27 @@ export class World {
    * home toward the core at fixed speed — they get captured on
    * arrival via the normal contact sweep.
    */
+  /**
+   * Return the current vector at world position (x, y). The field is
+   * the sum of two slowly-rotating sin/cos waves; the rotation makes
+   * eddies migrate so cells don't pool permanently.
+   */
+  currentAt(x: number, y: number): { x: number; y: number } {
+    const t = this.wallMs;
+    const rot = t * CURRENT_ROTATION;
+    const cosR = Math.cos(rot);
+    const sinR = Math.sin(rot);
+    // Rotate the sample coords so the field itself rotates over time.
+    const xr = x * cosR - y * sinR;
+    const yr = x * sinR + y * cosR;
+    const cx =
+      Math.sin(xr * CURRENT_SPATIAL + t * CURRENT_TIME) * CURRENT_STRENGTH;
+    const cy =
+      Math.cos(yr * CURRENT_SPATIAL * 0.7 + t * CURRENT_TIME * 0.6) *
+      CURRENT_STRENGTH;
+    return { x: cx, y: cy };
+  }
+
   private integrateFree(scale = 1): void {
     const a = this.arenaHalf;
     const span = a * 2;
@@ -1586,6 +1668,13 @@ export class World {
     for (const b of this.freeBodies) {
       let vx = b.vx ?? 0;
       let vy = b.vy ?? 0;
+
+      // ── Current ──────────────────────────────────────────────────
+      // Slow rotating field — every cell catches a fraction of the
+      // tide. Eddies form and migrate; barren stretches don't stay.
+      const cur = this.currentAt(b.x ?? 0, b.y ?? 0);
+      vx += cur.x;
+      vy += cur.y;
 
       // ── Wander steering ──────────────────────────────────────────
       // Each cell carries a slow-drifting heading. Apply a small
@@ -1864,9 +1953,10 @@ export class World {
       if (i >= 0) this.freeBodies.splice(i, 1);
     }
 
-    // Population-floor safeguard so the arena never goes barren.
+    // Population-floor safeguard so the arena never goes barren —
+    // refill from cradles so geographic identity is preserved.
     while (this.freeBodies.length < FREE_POP_MIN) {
-      this.freeBodies.push(this.spawnFree({ onEdge: true }));
+      this.freeBodies.push(this.spawnFree({ fromCradle: true }));
     }
   }
 

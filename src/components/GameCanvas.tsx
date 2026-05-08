@@ -7,6 +7,7 @@ import {
   drawBackground,
   drawBodies,
   drawBonds,
+  drawCradles,
   drawPredators,
   drawSparkles,
   drawAmbientPlankton,
@@ -469,6 +470,7 @@ export default function GameCanvas() {
       // Env CA underlay disabled — was creating rectangular dark
       // artifacts on some devices. CA logic still drives spawn
       // density.
+      drawCradles(ctx, world);
       drawBonds(ctx, world);
       drawBodies(ctx, world, hoveredId, draggingId);
       drawPredators(ctx, world);

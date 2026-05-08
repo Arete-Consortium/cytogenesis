@@ -138,6 +138,46 @@ export function drawEnvCA(ctx: CanvasRenderingContext2D, world: World): void {
 
 /* ─── Bonds (curved tissue) ──────────────────────────────────────── */
 
+/**
+ * Spawn cradles — pulsing gradient blooms at each cradle's world
+ * position, tinted by the cradle's preferred type. Drawn early in
+ * the world-space layer so cells render on top of them.
+ */
+export function drawCradles(ctx: CanvasRenderingContext2D, world: World): void {
+  if (!world.cradles || world.cradles.length === 0) return;
+  const T = currentTheme();
+  const t = world.tickN;
+  for (const c of world.cradles) {
+    const hex = T.nodeColors[c.type];
+    const [r, g, b] = parseHex(hex);
+    const pulse = 0.5 + 0.35 * Math.sin(t * 0.04 + c.phase);
+    const radius = 56 * (0.85 + pulse * 0.25);
+    const grad = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, radius);
+    grad.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${(0.42 * pulse).toFixed(3)})`);
+    grad.addColorStop(0.45, `rgba(${r}, ${g}, ${b}, ${(0.18 * pulse).toFixed(3)})`);
+    grad.addColorStop(1, `rgba(${r}, ${g}, ${b}, 0)`);
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(c.x, c.y, radius, 0, Math.PI * 2);
+    ctx.fill();
+    // Bright inner core — pulses faster than the outer bloom
+    const innerPulse = 0.7 + 0.3 * Math.sin(t * 0.09 + c.phase);
+    ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${(0.55 * innerPulse).toFixed(3)})`;
+    ctx.beginPath();
+    ctx.arc(c.x, c.y, 6 + 3 * innerPulse, 0, Math.PI * 2);
+    ctx.fill();
+    // Faint dashed boundary ring so the cradle reads as a "place"
+    ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, 0.25)`;
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 6]);
+    ctx.lineDashOffset = -t * 0.6;
+    ctx.beginPath();
+    ctx.arc(c.x, c.y, 38, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+}
+
 export function drawBonds(ctx: CanvasRenderingContext2D, world: World): void {
   if (world.bonds.length === 0) return;
   const NC = currentTheme().nodeColors;
