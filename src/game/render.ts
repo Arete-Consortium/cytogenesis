@@ -23,11 +23,21 @@ export function drawBackground(
   biomeStage = 0,
 ): void {
   const T = currentTheme();
-  // Flat bg tonally matched to the CA bloom. Uniform so any area
-  // without CA contribution still reads as ocean, never as a void.
-  // Biome stages still darken the whole canvas for depth feel.
+  // Base flat fill tonally matched to the CA bloom.
   const dark = 1 - Math.min(biomeStage, 3) * 0.15;
   ctx.fillStyle = darkenHex(T.bgFlat, dark);
+  ctx.fillRect(0, 0, width, height);
+
+  // Subtle radial vignette — center reads slightly brighter, corners
+  // sink toward black for depth + focus on the bell.
+  const cx = width / 2;
+  const cy = height / 2;
+  const radius = Math.max(width, height) * 0.85;
+  const vg = ctx.createRadialGradient(cx, cy, radius * 0.35, cx, cy, radius);
+  vg.addColorStop(0, "rgba(0, 0, 0, 0)");
+  vg.addColorStop(0.65, "rgba(0, 0, 0, 0.18)");
+  vg.addColorStop(1, "rgba(0, 0, 0, 0.55)");
+  ctx.fillStyle = vg;
   ctx.fillRect(0, 0, width, height);
 }
 
@@ -180,6 +190,35 @@ const BODY_HALO = (
   ctx.globalAlpha = 1;
 };
 
+/**
+ * Spherical highlight stamp — top-left bright spot + soft rim, applied
+ * after the type-specific fill so each cell reads as a 3D blob rather
+ * than a flat sticker. Cheap: one radial gradient + one stroke.
+ */
+const SPHERE_LIGHT = (
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  r: number,
+) => {
+  const hx = x - r * 0.35;
+  const hy = y - r * 0.35;
+  const g = ctx.createRadialGradient(hx, hy, r * 0.05, hx, hy, r * 0.95);
+  g.addColorStop(0, "rgba(255,255,255,0.55)");
+  g.addColorStop(0.45, "rgba(255,255,255,0.10)");
+  g.addColorStop(1, "rgba(255,255,255,0)");
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fill();
+  // Faint dark rim
+  ctx.strokeStyle = "rgba(0,0,0,0.30)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.arc(x, y, r - 0.5, 0, Math.PI * 2);
+  ctx.stroke();
+};
+
 function drawPropulsion(ctx: CanvasRenderingContext2D, b: Body, t: number) {
   const x = b.x ?? 0;
   const y = b.y ?? 0;
@@ -212,14 +251,15 @@ function drawPropulsion(ctx: CanvasRenderingContext2D, b: Body, t: number) {
   ctx.beginPath();
   ctx.arc(x, y, r, 0, Math.PI * 2);
   ctx.fill();
+  SPHERE_LIGHT(ctx, x, y, r);
   // Tiny eye
-  ctx.fillStyle = "rgba(0,0,0,0.5)";
+  ctx.fillStyle = "rgba(0,0,0,0.55)";
   ctx.beginPath();
   ctx.arc(x - dx * r * 0.4, y - dy * r * 0.4, r * 0.18, 0, Math.PI * 2);
   ctx.fill();
 }
 
-function drawSensor(ctx: CanvasRenderingContext2D, b: Body) {
+function drawSensor(ctx: CanvasRenderingContext2D, b: Body, t: number) {
   const x = b.x ?? 0;
   const y = b.y ?? 0;
   const r = b.radius;
@@ -227,15 +267,22 @@ function drawSensor(ctx: CanvasRenderingContext2D, b: Body) {
   ctx.beginPath();
   ctx.arc(x, y, r, 0, Math.PI * 2);
   ctx.fill();
-  // Pupil
-  ctx.fillStyle = "#1f0e3a";
+  // Iris ring
+  ctx.strokeStyle = "rgba(0,0,0,0.35)";
+  ctx.lineWidth = 1.4;
   ctx.beginPath();
-  ctx.arc(x, y, r * 0.55, 0, Math.PI * 2);
+  ctx.arc(x, y, r * 0.78, 0, Math.PI * 2);
+  ctx.stroke();
+  // Pupil — animates focus a touch
+  const focus = 0.5 + Math.sin(t * 0.04 + (b.id.charCodeAt(0) % 7)) * 0.07;
+  ctx.fillStyle = "#0e0626";
+  ctx.beginPath();
+  ctx.arc(x, y, r * focus, 0, Math.PI * 2);
   ctx.fill();
-  // Highlight
-  ctx.fillStyle = "rgba(255,255,255,0.7)";
+  // Catchlight
+  ctx.fillStyle = "rgba(255,255,255,0.9)";
   ctx.beginPath();
-  ctx.arc(x - r * 0.2, y - r * 0.2, r * 0.18, 0, Math.PI * 2);
+  ctx.arc(x - r * 0.18, y - r * 0.22, r * 0.14, 0, Math.PI * 2);
   ctx.fill();
 }
 
@@ -254,7 +301,20 @@ function drawMembrane(ctx: CanvasRenderingContext2D, b: Body) {
   }
   ctx.closePath();
   ctx.fill();
-  ctx.strokeStyle = "rgba(255,255,255,0.35)";
+  // Chitin double-stroke — light edge + dark inner shadow
+  ctx.strokeStyle = "rgba(255,255,255,0.55)";
+  ctx.lineWidth = 1.4;
+  ctx.stroke();
+  ctx.beginPath();
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2 - Math.PI / 6;
+    const px = x + Math.cos(a) * r * 0.7;
+    const py = y + Math.sin(a) * r * 0.7;
+    if (i === 0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  }
+  ctx.closePath();
+  ctx.strokeStyle = "rgba(0,0,0,0.3)";
   ctx.lineWidth = 1;
   ctx.stroke();
 }
@@ -264,18 +324,65 @@ function drawMouth(ctx: CanvasRenderingContext2D, b: Body, t: number) {
   const y = b.y ?? 0;
   const r = b.radius;
   const open = 0.35 + Math.sin(t * 0.07) * 0.15;
+  // Cavity (dark interior)
+  ctx.fillStyle = "rgba(20,5,5,0.9)";
+  ctx.beginPath();
+  ctx.arc(x, y, r * 0.95, 0, Math.PI * 2);
+  ctx.fill();
+  // Body — pac-man wedge
   ctx.fillStyle = currentTheme().nodeColors.mouth;
   ctx.beginPath();
   ctx.arc(x, y, r, open, Math.PI * 2 - open);
   ctx.lineTo(x, y);
   ctx.closePath();
   ctx.fill();
+  SPHERE_LIGHT(ctx, x, y, r);
+  // Pointed teeth along the gape edge
+  ctx.fillStyle = "rgba(255,250,235,0.95)";
+  const teeth = 4;
+  for (let i = 0; i < teeth; i++) {
+    const f = (i + 0.5) / teeth;
+    // Top jaw
+    const ta = -open + f * (Math.PI - open * 2) * -1;
+    const ax = x + Math.cos(ta) * r * 0.92;
+    const ay = y + Math.sin(ta) * r * 0.92;
+    const bx = x + Math.cos(ta) * r * 0.55;
+    const by = y + Math.sin(ta) * r * 0.55;
+    ctx.beginPath();
+    ctx.moveTo(ax, ay);
+    ctx.lineTo(bx + r * 0.08, by);
+    ctx.lineTo(bx - r * 0.08, by);
+    ctx.closePath();
+    ctx.fill();
+    // Bottom jaw (mirror)
+    const tb = open + f * (Math.PI - open * 2);
+    const cx = x + Math.cos(tb) * r * 0.92;
+    const cy = y + Math.sin(tb) * r * 0.92;
+    const dx = x + Math.cos(tb) * r * 0.55;
+    const dy = y + Math.sin(tb) * r * 0.55;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(dx + r * 0.08, dy);
+    ctx.lineTo(dx - r * 0.08, dy);
+    ctx.closePath();
+    ctx.fill();
+  }
 }
 
-function drawStinger(ctx: CanvasRenderingContext2D, b: Body) {
+function drawStinger(ctx: CanvasRenderingContext2D, b: Body, t: number) {
   const x = b.x ?? 0;
   const y = b.y ?? 0;
   const r = b.radius;
+  // Subtle pulsing aura — venom glow.
+  const pulse = 0.45 + Math.sin(t * 0.08 + (b.id.charCodeAt(0) % 5)) * 0.12;
+  const aura = ctx.createRadialGradient(x, y, r * 0.5, x, y, r * 1.7);
+  aura.addColorStop(0, `rgba(255, 180, 90, ${pulse.toFixed(2)})`);
+  aura.addColorStop(1, "rgba(255, 180, 90, 0)");
+  ctx.fillStyle = aura;
+  ctx.beginPath();
+  ctx.arc(x, y, r * 1.7, 0, Math.PI * 2);
+  ctx.fill();
+  // Star body
   ctx.fillStyle = currentTheme().nodeColors.stinger;
   ctx.beginPath();
   const points = 6;
@@ -289,6 +396,19 @@ function drawStinger(ctx: CanvasRenderingContext2D, b: Body) {
   }
   ctx.closePath();
   ctx.fill();
+  ctx.strokeStyle = "rgba(255,255,255,0.5)";
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  // Bright tips
+  ctx.fillStyle = "rgba(255,255,200,0.9)";
+  for (let i = 0; i < points; i++) {
+    const a = ((i * 2) / (points * 2)) * Math.PI * 2;
+    const px = x + Math.cos(a) * r;
+    const py = y + Math.sin(a) * r;
+    ctx.beginPath();
+    ctx.arc(px, py, r * 0.16, 0, Math.PI * 2);
+    ctx.fill();
+  }
 }
 
 function drawChloroplast(ctx: CanvasRenderingContext2D, b: Body) {
@@ -299,13 +419,26 @@ function drawChloroplast(ctx: CanvasRenderingContext2D, b: Body) {
   ctx.beginPath();
   ctx.ellipse(x, y, r * 1.25, r * 0.7, 0, 0, Math.PI * 2);
   ctx.fill();
-  ctx.fillStyle = "rgba(0, 80, 60, 0.4)";
+  // Grana stack — three dark green dots inside
+  ctx.fillStyle = "rgba(0, 70, 50, 0.55)";
+  for (let i = -1; i <= 1; i++) {
+    ctx.beginPath();
+    ctx.ellipse(x + i * r * 0.45, y, r * 0.18, r * 0.32, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // Top highlight crescent
+  ctx.fillStyle = "rgba(255,255,255,0.32)";
   ctx.beginPath();
-  ctx.ellipse(x, y, r * 0.7, r * 0.25, 0, 0, Math.PI * 2);
+  ctx.ellipse(x, y - r * 0.25, r * 0.95, r * 0.18, 0, 0, Math.PI * 2);
   ctx.fill();
+  ctx.strokeStyle = "rgba(0,0,0,0.25)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.ellipse(x, y, r * 1.25, r * 0.7, 0, 0, Math.PI * 2);
+  ctx.stroke();
 }
 
-function drawMitochondrion(ctx: CanvasRenderingContext2D, b: Body) {
+function drawMitochondrion(ctx: CanvasRenderingContext2D, b: Body, t: number) {
   const x = b.x ?? 0;
   const y = b.y ?? 0;
   const r = b.radius;
@@ -313,31 +446,66 @@ function drawMitochondrion(ctx: CanvasRenderingContext2D, b: Body) {
   ctx.beginPath();
   ctx.ellipse(x, y, r * 1.3, r * 0.7, 0, 0, Math.PI * 2);
   ctx.fill();
-  ctx.strokeStyle = "rgba(120, 80, 0, 0.5)";
-  ctx.lineWidth = 1;
-  for (let i = -1; i <= 1; i++) {
+  // Cristae — undulating internal folds
+  ctx.strokeStyle = "rgba(140, 70, 0, 0.7)";
+  ctx.lineWidth = 1.2;
+  for (let i = -2; i <= 2; i++) {
+    const off = Math.sin(t * 0.06 + i) * 0.08;
     ctx.beginPath();
-    ctx.moveTo(x + i * r * 0.4, y - r * 0.45);
-    ctx.lineTo(x + i * r * 0.4, y + r * 0.45);
+    ctx.moveTo(x + i * r * 0.32, y - r * 0.5);
+    ctx.quadraticCurveTo(
+      x + i * r * 0.32 + r * off,
+      y,
+      x + i * r * 0.32,
+      y + r * 0.5,
+    );
     ctx.stroke();
   }
+  // Top highlight
+  ctx.fillStyle = "rgba(255,220,160,0.4)";
+  ctx.beginPath();
+  ctx.ellipse(x, y - r * 0.22, r * 1.0, r * 0.18, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(80, 35, 0, 0.4)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.ellipse(x, y, r * 1.3, r * 0.7, 0, 0, Math.PI * 2);
+  ctx.stroke();
 }
 
-function drawSpore(ctx: CanvasRenderingContext2D, b: Body) {
+function drawSpore(ctx: CanvasRenderingContext2D, b: Body, t: number) {
   const x = b.x ?? 0;
   const y = b.y ?? 0;
   const r = b.radius;
-  ctx.fillStyle = currentTheme().nodeColors.spore;
+  // Outer ring of pods, each with a faint highlight + dark rim
+  const fill = currentTheme().nodeColors.spore;
+  const phase = (b.id.charCodeAt(0) % 7) * 0.7;
   for (let i = 0; i < 5; i++) {
-    const a = (i / 5) * Math.PI * 2;
+    const a = (i / 5) * Math.PI * 2 + Math.sin(t * 0.03 + phase) * 0.05;
     const px = x + Math.cos(a) * r * 0.55;
     const py = y + Math.sin(a) * r * 0.55;
+    ctx.fillStyle = fill;
     ctx.beginPath();
     ctx.arc(px, py, r * 0.32, 0, Math.PI * 2);
     ctx.fill();
+    ctx.fillStyle = "rgba(255,255,255,0.4)";
+    ctx.beginPath();
+    ctx.arc(px - r * 0.08, py - r * 0.08, r * 0.1, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(0,0,0,0.25)";
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.arc(px, py, r * 0.32, 0, Math.PI * 2);
+    ctx.stroke();
   }
+  // Center pod
+  ctx.fillStyle = fill;
   ctx.beginPath();
-  ctx.arc(x, y, r * 0.28, 0, Math.PI * 2);
+  ctx.arc(x, y, r * 0.34, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "rgba(255,255,255,0.45)";
+  ctx.beginPath();
+  ctx.arc(x - r * 0.08, y - r * 0.08, r * 0.12, 0, Math.PI * 2);
   ctx.fill();
 }
 
@@ -349,13 +517,13 @@ const SHAPE_DRAWERS: Record<
     /* core handled separately by drawCore */
   },
   propulsion: drawPropulsion,
-  sensor: (ctx, b) => drawSensor(ctx, b),
+  sensor: drawSensor,
   membrane: (ctx, b) => drawMembrane(ctx, b),
   mouth: drawMouth,
-  stinger: (ctx, b) => drawStinger(ctx, b),
+  stinger: drawStinger,
   chloroplast: (ctx, b) => drawChloroplast(ctx, b),
-  mitochondrion: (ctx, b) => drawMitochondrion(ctx, b),
-  spore: (ctx, b) => drawSpore(ctx, b),
+  mitochondrion: drawMitochondrion,
+  spore: drawSpore,
 };
 
 function drawCell(
@@ -880,32 +1048,50 @@ export function drawPredators(ctx: CanvasRenderingContext2D, world: World): void
 }
 
 /**
- * Centipede — long head + body chain. Draws the entire creature as a
- * single unit so the chain is visually continuous.
+ * Centipede — chitinous brown-olive predator with segmented body,
+ * articulated legs along each segment, and a distinct armored head.
+ * Drawn back-to-front so the head sits on top of its own body.
  */
+const CENTIPEDE_PALETTE = {
+  bodyTop: "#8a8a3a",      // olive top highlight
+  bodyMid: "#5a6024",      // body fill
+  bodyDark: "#2e3010",     // shaded underside / segment seams
+  segRim: "#1c1d08",       // dark exoskeleton edge
+  legColor: "#3e4416",     // limbs
+  legShine: "#7e8a3a",     // limb highlight
+  mandible: "#3a1d08",     // dark blood-brown jaws
+  mandibleTip: "#1a0a04",
+  antenna: "#2a3010",
+  eyeRim: "#0d0904",
+  eyeShine: "#f5d65a",     // amber compound eye
+  haloFill: "rgba(140, 150, 60, 0.32)",
+  haloFade: "rgba(140, 150, 60, 0)",
+  toothPale: "#d8c878",
+};
+
 function drawCentipede(ctx: CanvasRenderingContext2D, world: World): void {
   const c = world.centipede;
   if (!c) return;
-  const T = currentTheme().predator;
+  const P = CENTIPEDE_PALETTE;
   const head = c.head;
   const segs = c.segments;
   const t = world.tickN;
   const allBodies = [head, ...segs];
 
-  // Halo under the chain
+  // ── Soft warm-green halo under the whole creature ────────────────
   for (const b of allBodies) {
     const x = b.x ?? 0;
     const y = b.y ?? 0;
     const halo = ctx.createRadialGradient(x, y, b.radius * 0.4, x, y, b.radius * 2.4);
-    halo.addColorStop(0, T.halo0);
-    halo.addColorStop(1, T.halo1);
+    halo.addColorStop(0, P.haloFill);
+    halo.addColorStop(1, P.haloFade);
     ctx.fillStyle = halo;
     ctx.beginPath();
     ctx.arc(x, y, b.radius * 2.4, 0, Math.PI * 2);
     ctx.fill();
   }
 
-  // Connective body — stroked smooth path through head + segment centers
+  // ── Connective body trunk — smoothed dark spine ─────────────────
   if (segs.length > 0) {
     ctx.beginPath();
     ctx.moveTo(head.x ?? 0, head.y ?? 0);
@@ -918,34 +1104,83 @@ function drawCentipede(ctx: CanvasRenderingContext2D, world: World): void {
     }
     const last = allBodies[allBodies.length - 1];
     ctx.lineTo(last.x ?? 0, last.y ?? 0);
-    ctx.strokeStyle = T.bodyDark;
-    ctx.lineWidth = head.radius * 1.4;
+    ctx.strokeStyle = P.bodyDark;
+    ctx.lineWidth = head.radius * 1.5;
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
     ctx.stroke();
+    // Highlight ribbon on top of trunk for sheen
+    ctx.strokeStyle = P.bodyMid;
+    ctx.lineWidth = head.radius * 1.05;
+    ctx.stroke();
   }
 
-  // Each segment: dark circle with chitin ring + faint inner highlight
+  // ── Segments — back to front so head sits on top ────────────────
   for (let i = segs.length - 1; i >= 0; i--) {
     const s = segs[i];
     const x = s.x ?? 0;
     const y = s.y ?? 0;
-    ctx.fillStyle = T.bodyDark;
+    const r = s.radius;
+    // Per-segment heading: vector toward next-forward neighbor.
+    const next = i === 0 ? head : segs[i - 1];
+    const ax = (next.x ?? 0) - x;
+    const ay = (next.y ?? 0) - y;
+    const segAngle = Math.atan2(ay, ax) || 0;
+
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(segAngle);
+
+    // Legs — pair on each side, animated walking wave
+    const legPhase = t * 0.18 + i * 1.1;
+    ctx.strokeStyle = P.legColor;
+    ctx.lineWidth = Math.max(1.4, r * 0.18);
+    ctx.lineCap = "round";
+    for (const side of [-1, 1]) {
+      for (const off of [-r * 0.45, r * 0.45]) {
+        const wag = Math.sin(legPhase + off * 0.05) * 0.5;
+        ctx.beginPath();
+        ctx.moveTo(off * 0.4, side * r * 0.35);
+        ctx.quadraticCurveTo(
+          off * 0.6 + side * 0.1,
+          side * (r * 1.1 + wag * 4),
+          off * 0.7 + side * 0.4,
+          side * (r * 1.55 + wag * 3),
+        );
+        ctx.stroke();
+      }
+    }
+
+    // Body shell — vertical gradient (top lighter, bottom shaded)
+    const grad = ctx.createLinearGradient(0, -r, 0, r);
+    grad.addColorStop(0, P.bodyTop);
+    grad.addColorStop(0.55, P.bodyMid);
+    grad.addColorStop(1, P.bodyDark);
+    ctx.fillStyle = grad;
     ctx.beginPath();
-    ctx.arc(x, y, s.radius, 0, Math.PI * 2);
+    // Slightly elongated capsule along travel direction
+    ctx.ellipse(0, 0, r * 1.05, r * 0.92, 0, 0, Math.PI * 2);
     ctx.fill();
-    ctx.strokeStyle = T.rim;
-    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = P.segRim;
+    ctx.lineWidth = 1.4;
     ctx.stroke();
-    // Chitin segment ring
-    ctx.strokeStyle = T.lureLine;
-    ctx.lineWidth = 1.2;
+    // Spine ridge — thin lighter line down the middle of each segment
+    ctx.strokeStyle = P.bodyTop;
+    ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.arc(x, y, s.radius * 0.6, 0, Math.PI * 2);
+    ctx.moveTo(-r * 0.6, 0);
+    ctx.lineTo(r * 0.6, 0);
     ctx.stroke();
+    // Specular highlight
+    ctx.fillStyle = "rgba(255,255,210,0.18)";
+    ctx.beginPath();
+    ctx.ellipse(0, -r * 0.35, r * 0.6, r * 0.22, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
   }
 
-  // Head — distinct: larger, with eyes + teeth + segmented mandibles
+  // ── Head — armored carapace, antennae, mandibles ────────────────
   const hx = head.x ?? 0;
   const hy = head.y ?? 0;
   const hr = head.radius;
@@ -955,51 +1190,97 @@ function drawCentipede(ctx: CanvasRenderingContext2D, world: World): void {
   ctx.translate(hx, hy);
   ctx.rotate(angle);
 
-  // Body
-  ctx.fillStyle = T.bodyDark;
+  // Antennae — twitching wisps in front of the head
+  ctx.strokeStyle = P.antenna;
+  ctx.lineWidth = 1.6;
+  ctx.lineCap = "round";
+  for (const side of [-1, 1]) {
+    const tw = Math.sin(t * 0.12 + side) * 0.4;
+    ctx.beginPath();
+    ctx.moveTo(hr * 0.4, side * hr * 0.4);
+    ctx.quadraticCurveTo(
+      hr * 1.4,
+      side * (hr * 0.9 + tw * 2),
+      hr * 1.95,
+      side * (hr * 0.4 + tw * 4),
+    );
+    ctx.stroke();
+  }
+
+  // Head shell — domed gradient
+  const headGrad = ctx.createLinearGradient(0, -hr, 0, hr);
+  headGrad.addColorStop(0, P.bodyTop);
+  headGrad.addColorStop(0.55, P.bodyMid);
+  headGrad.addColorStop(1, P.bodyDark);
+  ctx.fillStyle = headGrad;
   ctx.beginPath();
-  ctx.ellipse(0, 0, hr, hr * 0.85, 0, 0, Math.PI * 2);
+  ctx.ellipse(0, 0, hr * 1.08, hr * 0.9, 0, 0, Math.PI * 2);
   ctx.fill();
-  ctx.strokeStyle = T.rim;
+  ctx.strokeStyle = P.segRim;
   ctx.lineWidth = 1.8;
   ctx.stroke();
 
-  // Mandibles — two curved spikes flaring forward
-  ctx.fillStyle = T.teeth;
-  for (const side of [-1, 1]) {
+  // Plate seams across the head — three vertical creases
+  ctx.strokeStyle = P.bodyDark;
+  ctx.lineWidth = 1;
+  for (const off of [-hr * 0.3, 0, hr * 0.3]) {
     ctx.beginPath();
-    ctx.moveTo(hr * 0.6, hr * 0.35 * side);
-    ctx.quadraticCurveTo(hr * 1.1, hr * 0.55 * side, hr * 1.3, hr * 0.2 * side);
-    ctx.quadraticCurveTo(hr * 1.0, hr * 0.3 * side, hr * 0.7, hr * 0.2 * side);
-    ctx.closePath();
-    ctx.fill();
+    ctx.moveTo(off, -hr * 0.65);
+    ctx.lineTo(off, hr * 0.65);
+    ctx.stroke();
   }
 
-  // Front teeth row
-  ctx.fillStyle = T.teeth;
+  // Mandibles — curved chitin scythes
+  for (const side of [-1, 1]) {
+    const grd = ctx.createLinearGradient(hr * 0.6, 0, hr * 1.4, 0);
+    grd.addColorStop(0, P.mandible);
+    grd.addColorStop(1, P.mandibleTip);
+    ctx.fillStyle = grd;
+    ctx.beginPath();
+    ctx.moveTo(hr * 0.55, hr * 0.32 * side);
+    ctx.quadraticCurveTo(hr * 1.15, hr * 0.55 * side, hr * 1.45, hr * 0.18 * side);
+    ctx.quadraticCurveTo(hr * 1.05, hr * 0.32 * side, hr * 0.7, hr * 0.18 * side);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = "rgba(0,0,0,0.5)";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+
+  // Inner small teeth between the mandibles
+  ctx.fillStyle = P.toothPale;
   for (let i = -1; i <= 1; i++) {
     const ty = i * hr * 0.18;
     ctx.beginPath();
     ctx.moveTo(hr * 0.55, ty);
-    ctx.lineTo(hr * 0.95, ty - hr * 0.07);
-    ctx.lineTo(hr * 0.95, ty + hr * 0.07);
+    ctx.lineTo(hr * 0.92, ty - hr * 0.07);
+    ctx.lineTo(hr * 0.92, ty + hr * 0.07);
     ctx.closePath();
     ctx.fill();
   }
 
-  // Two glowing eyes
-  ctx.fillStyle = T.eye;
-  for (const ey of [-hr * 0.35, hr * 0.35]) {
+  // Compound eyes — amber with dark rim, one each side near front
+  for (const ey of [-hr * 0.42, hr * 0.42]) {
+    // socket
+    ctx.fillStyle = P.eyeRim;
     ctx.beginPath();
-    ctx.arc(hr * 0.15, ey, hr * 0.13, 0, Math.PI * 2);
+    ctx.arc(hr * 0.18, ey, hr * 0.22, 0, Math.PI * 2);
     ctx.fill();
-  }
-  // Pupils — pulse with time so the head reads as alive
-  ctx.fillStyle = "#000";
-  const pupil = 0.05 + 0.02 * Math.sin(t * 0.05);
-  for (const ey of [-hr * 0.35, hr * 0.35]) {
+    // amber lens
+    ctx.fillStyle = P.eyeShine;
     ctx.beginPath();
-    ctx.arc(hr * 0.18, ey, hr * pupil, 0, Math.PI * 2);
+    ctx.arc(hr * 0.18, ey, hr * 0.16, 0, Math.PI * 2);
+    ctx.fill();
+    // catchlight
+    ctx.fillStyle = "rgba(255,255,255,0.85)";
+    ctx.beginPath();
+    ctx.arc(hr * 0.22, ey - hr * 0.04, hr * 0.05, 0, Math.PI * 2);
+    ctx.fill();
+    // pupil
+    ctx.fillStyle = "rgba(0,0,0,0.6)";
+    const pulse = 0.05 + 0.015 * Math.sin(t * 0.05);
+    ctx.beginPath();
+    ctx.arc(hr * 0.16, ey, hr * pulse, 0, Math.PI * 2);
     ctx.fill();
   }
 
