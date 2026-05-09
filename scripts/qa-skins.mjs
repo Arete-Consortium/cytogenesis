@@ -40,5 +40,7 @@ async function shot(theme, label) {
 
 await shot("aquatic", "fresh");
 await shot("galactic", "fresh");
+await shot("sushi", "fresh");
+await shot("yokai", "fresh");
 
 await browser.close();

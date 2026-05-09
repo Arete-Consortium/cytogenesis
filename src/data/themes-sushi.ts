@@ -605,6 +605,328 @@ function drawPawPrintWake(ctx: CanvasRenderingContext2D, world: World): void {
   }
 }
 
+// ── Realistic sushi free-cell glyphs ────────────────────────────────
+// Each NodeTypeId is reskinned as a specific sushi piece. The default
+// abstract cell glyph is fully replaced.
+
+function drawSushiFreeCell(ctx: CanvasRenderingContext2D, body: Body, t: number): void {
+  const x = body.x ?? 0;
+  const y = body.y ?? 0;
+  const r = body.radius;
+  ctx.save();
+  ctx.translate(x, y);
+
+  // Subtle bob — sushi pieces gently rotate and oscillate.
+  const bobAngle = Math.sin(t * 0.04 + x * 0.01) * 0.12;
+  ctx.rotate(bobAngle);
+
+  switch (body.type) {
+    case "propulsion": {
+      // Ebi nigiri — pink-orange shrimp draped over rice oval.
+      // Rice base
+      const rice = ctx.createLinearGradient(0, -r * 0.25, 0, r * 0.6);
+      rice.addColorStop(0, "#ffffff");
+      rice.addColorStop(1, "#f0e8d0");
+      ctx.fillStyle = rice;
+      ctx.strokeStyle = "rgba(160, 130, 80, 0.65)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.ellipse(0, r * 0.15, r * 0.95, r * 0.55, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      // Shrimp body — pink with white-and-orange stripes
+      const shrimp = ctx.createLinearGradient(0, -r * 0.4, 0, r * 0.2);
+      shrimp.addColorStop(0, "#ff9d92");
+      shrimp.addColorStop(1, "#e8625a");
+      ctx.fillStyle = shrimp;
+      ctx.strokeStyle = "rgba(140, 50, 40, 0.85)";
+      ctx.lineWidth = 1.1;
+      ctx.beginPath();
+      ctx.ellipse(0, -r * 0.1, r * 0.85, r * 0.4, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      // Curl tail accent
+      ctx.fillStyle = "#c4453d";
+      ctx.beginPath();
+      ctx.ellipse(r * 0.55, -r * 0.18, r * 0.18, r * 0.12, 0.5, 0, Math.PI * 2);
+      ctx.fill();
+      // White stripes on shrimp
+      ctx.strokeStyle = "rgba(255, 240, 230, 0.65)";
+      ctx.lineWidth = 0.8;
+      for (let i = -1; i <= 1; i++) {
+        ctx.beginPath();
+        ctx.moveTo(i * r * 0.32, -r * 0.42);
+        ctx.lineTo(i * r * 0.32, r * 0.18);
+        ctx.stroke();
+      }
+      break;
+    }
+    case "sensor": {
+      // Tamago nigiri — yellow egg block on rice with nori belt.
+      // Rice base
+      const rice = ctx.createLinearGradient(0, -r * 0.1, 0, r * 0.7);
+      rice.addColorStop(0, "#ffffff");
+      rice.addColorStop(1, "#efe4cc");
+      ctx.fillStyle = rice;
+      ctx.strokeStyle = "rgba(160, 130, 80, 0.6)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.ellipse(0, r * 0.3, r * 0.95, r * 0.45, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      // Tamago block (yellow)
+      const tama = ctx.createLinearGradient(0, -r * 0.6, 0, r * 0.2);
+      tama.addColorStop(0, "#ffe066");
+      tama.addColorStop(0.5, "#ffd633");
+      tama.addColorStop(1, "#e8b51a");
+      ctx.fillStyle = tama;
+      ctx.strokeStyle = "rgba(140, 100, 0, 0.85)";
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.ellipse(0, -r * 0.15, r * 0.85, r * 0.4, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      // Layered tamago lines (folded omelette)
+      ctx.strokeStyle = "rgba(180, 140, 0, 0.45)";
+      ctx.lineWidth = 0.7;
+      ctx.beginPath();
+      ctx.moveTo(-r * 0.7, -r * 0.18);
+      ctx.lineTo(r * 0.7, -r * 0.18);
+      ctx.moveTo(-r * 0.7, -r * 0.05);
+      ctx.lineTo(r * 0.7, -r * 0.05);
+      ctx.stroke();
+      // Nori belt across the middle
+      ctx.fillStyle = "#1c2a1a";
+      ctx.fillRect(-r * 0.95, r * 0.05, r * 1.9, r * 0.18);
+      break;
+    }
+    case "membrane": {
+      // Onigiri — white triangular rice ball with nori band.
+      const rice = ctx.createLinearGradient(0, -r * 0.9, 0, r * 0.7);
+      rice.addColorStop(0, "#ffffff");
+      rice.addColorStop(1, "#e0d8c0");
+      ctx.fillStyle = rice;
+      ctx.strokeStyle = "rgba(140, 110, 70, 0.75)";
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(0, -r * 0.95);
+      ctx.lineTo(r * 0.85, r * 0.65);
+      ctx.lineTo(-r * 0.85, r * 0.65);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      // Nori band along the bottom
+      ctx.fillStyle = "#1c2a1a";
+      ctx.beginPath();
+      ctx.moveTo(-r * 0.55, r * 0.1);
+      ctx.lineTo(r * 0.55, r * 0.1);
+      ctx.lineTo(r * 0.85, r * 0.65);
+      ctx.lineTo(-r * 0.85, r * 0.65);
+      ctx.closePath();
+      ctx.fill();
+      // Rice grain hint
+      ctx.fillStyle = "rgba(255, 255, 255, 0.7)";
+      for (const [px, py] of [[-r * 0.2, -r * 0.3], [r * 0.15, -r * 0.5], [r * 0.25, -r * 0.1]]) {
+        ctx.beginPath();
+        ctx.ellipse(px, py, 1.4, 0.8, 0.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      break;
+    }
+    case "mouth": {
+      // Maguro (tuna) nigiri — deep red slab on rice.
+      const rice = ctx.createLinearGradient(0, -r * 0.1, 0, r * 0.7);
+      rice.addColorStop(0, "#ffffff");
+      rice.addColorStop(1, "#efe4cc");
+      ctx.fillStyle = rice;
+      ctx.strokeStyle = "rgba(160, 130, 80, 0.6)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.ellipse(0, r * 0.3, r * 0.95, r * 0.45, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      // Tuna slab
+      const tuna = ctx.createLinearGradient(0, -r * 0.55, 0, r * 0.15);
+      tuna.addColorStop(0, "#d12d36");
+      tuna.addColorStop(0.5, "#a91823");
+      tuna.addColorStop(1, "#7a0e16");
+      ctx.fillStyle = tuna;
+      ctx.strokeStyle = "rgba(60, 5, 10, 0.85)";
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.ellipse(0, -r * 0.15, r * 0.9, r * 0.42, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      // Marbling streaks (white fat lines)
+      ctx.strokeStyle = "rgba(255, 230, 220, 0.55)";
+      ctx.lineWidth = 0.7;
+      for (let i = -1; i <= 1; i++) {
+        ctx.beginPath();
+        ctx.moveTo(-r * 0.6, -r * 0.15 + i * r * 0.08);
+        ctx.bezierCurveTo(-r * 0.2, -r * 0.18 + i * r * 0.08, r * 0.2, -r * 0.12 + i * r * 0.08, r * 0.6, -r * 0.18 + i * r * 0.08);
+        ctx.stroke();
+      }
+      break;
+    }
+    case "stinger": {
+      // Tekka maki cross-section — round nori ring + rice + tuna center.
+      // Outer nori ring
+      ctx.fillStyle = "#1c2a1a";
+      ctx.strokeStyle = "rgba(0, 20, 0, 0.85)";
+      ctx.lineWidth = 0.8;
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 0.95, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      // Rice ring
+      ctx.fillStyle = "#fff5e0";
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 0.78, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "rgba(160, 130, 80, 0.55)";
+      ctx.lineWidth = 0.8;
+      ctx.stroke();
+      // Tuna center
+      const tuna = ctx.createRadialGradient(-r * 0.1, -r * 0.1, 0, 0, 0, r * 0.4);
+      tuna.addColorStop(0, "#e54652");
+      tuna.addColorStop(1, "#8a1320");
+      ctx.fillStyle = tuna;
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 0.4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "rgba(60, 5, 10, 0.7)";
+      ctx.lineWidth = 0.6;
+      ctx.stroke();
+      // Rice grain texture
+      ctx.fillStyle = "rgba(255, 255, 255, 0.55)";
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2;
+        const px = Math.cos(a) * r * 0.6;
+        const py = Math.sin(a) * r * 0.6;
+        ctx.beginPath();
+        ctx.ellipse(px, py, 0.9, 0.5, a, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      break;
+    }
+    case "chloroplast": {
+      // Kappa maki cross-section — nori ring + rice + cucumber wedges.
+      ctx.fillStyle = "#1c2a1a";
+      ctx.strokeStyle = "rgba(0, 20, 0, 0.85)";
+      ctx.lineWidth = 0.8;
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 0.95, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      // Rice ring
+      ctx.fillStyle = "#fff5e0";
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 0.78, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "rgba(160, 130, 80, 0.55)";
+      ctx.lineWidth = 0.8;
+      ctx.stroke();
+      // Cucumber center — light green with darker edge
+      const cuke = ctx.createRadialGradient(0, 0, 0, 0, 0, r * 0.4);
+      cuke.addColorStop(0, "#d8f0a8");
+      cuke.addColorStop(0.65, "#88c060");
+      cuke.addColorStop(1, "#3a7028");
+      ctx.fillStyle = cuke;
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 0.4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "rgba(30, 60, 20, 0.85)";
+      ctx.lineWidth = 0.7;
+      ctx.stroke();
+      // Cucumber seed dots
+      ctx.fillStyle = "rgba(255, 255, 255, 0.85)";
+      for (let i = 0; i < 5; i++) {
+        const a = (i / 5) * Math.PI * 2;
+        const px = Math.cos(a) * r * 0.18;
+        const py = Math.sin(a) * r * 0.18;
+        ctx.beginPath();
+        ctx.ellipse(px, py, 1, 0.6, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      break;
+    }
+    case "mitochondrion": {
+      // Uni gunkan — nori boat wrapping orange sea-urchin roe heaped on rice.
+      // Nori boat outer
+      ctx.fillStyle = "#1c2a1a";
+      ctx.strokeStyle = "rgba(0, 15, 0, 0.85)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.ellipse(0, r * 0.05, r * 0.95, r * 0.7, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      // Rice underlayer
+      ctx.fillStyle = "#fff8e0";
+      ctx.beginPath();
+      ctx.ellipse(0, r * 0.25, r * 0.78, r * 0.35, 0, 0, Math.PI * 2);
+      ctx.fill();
+      // Uni mound (orange/gold roe heap)
+      const uni = ctx.createRadialGradient(-r * 0.1, -r * 0.2, 0, 0, -r * 0.15, r * 0.7);
+      uni.addColorStop(0, "#fff0a0");
+      uni.addColorStop(0.5, "#ffba30");
+      uni.addColorStop(1, "#cc7510");
+      ctx.fillStyle = uni;
+      ctx.strokeStyle = "rgba(120, 60, 0, 0.7)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.ellipse(0, -r * 0.15, r * 0.7, r * 0.45, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      // Glistening highlight on uni
+      ctx.fillStyle = "rgba(255, 255, 220, 0.6)";
+      ctx.beginPath();
+      ctx.ellipse(-r * 0.18, -r * 0.3, r * 0.2, r * 0.08, 0.2, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+    }
+    case "spore": {
+      // Gari — pink pickled-ginger slice. Translucent, undulating ribbon.
+      const grad = ctx.createLinearGradient(0, -r, 0, r);
+      grad.addColorStop(0, "#fff0f4");
+      grad.addColorStop(0.5, "#ffc4d0");
+      grad.addColorStop(1, "#f593a8");
+      ctx.fillStyle = grad;
+      ctx.strokeStyle = "rgba(180, 70, 100, 0.65)";
+      ctx.lineWidth = 0.8;
+      ctx.beginPath();
+      // Wavy curled-petal silhouette
+      ctx.moveTo(-r * 0.85, -r * 0.1);
+      ctx.bezierCurveTo(-r * 0.5, -r * 0.85, r * 0.45, -r * 0.65, r * 0.85, -r * 0.05);
+      ctx.bezierCurveTo(r * 0.6, r * 0.7, -r * 0.55, r * 0.75, -r * 0.85, -r * 0.1);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      // Translucent veining
+      ctx.strokeStyle = "rgba(220, 140, 160, 0.45)";
+      ctx.lineWidth = 0.6;
+      ctx.beginPath();
+      ctx.moveTo(-r * 0.5, 0);
+      ctx.bezierCurveTo(-r * 0.2, -r * 0.3, r * 0.2, -r * 0.2, r * 0.5, -r * 0.05);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(-r * 0.4, r * 0.2);
+      ctx.bezierCurveTo(0, r * 0.05, r * 0.3, r * 0.15, r * 0.55, r * 0.05);
+      ctx.stroke();
+      break;
+    }
+    case "core":
+    default: {
+      // Fallback — simple nigiri shape.
+      ctx.fillStyle = "rgba(255, 245, 220, 0.85)";
+      ctx.beginPath();
+      ctx.ellipse(0, 0, r * 0.85, r * 0.55, 0, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+    }
+  }
+  ctx.restore();
+}
+
 // ── Bundle ───────────────────────────────────────────────────────────
 
 export const sushiOverrides: ThemeOverrides = {
@@ -617,6 +939,7 @@ export const sushiOverrides: ThemeOverrides = {
   drawSurgeWake: drawPawPrintWake,
   drawSkirmisher: drawOctopus,
   drawCentipede: drawTakoRenji,
+  drawFreeCellShape: drawSushiFreeCell,
 };
 
 export const sushiPreviewSvg = `
