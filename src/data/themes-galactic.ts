@@ -568,245 +568,263 @@ function drawGalacticFreeCell(ctx: CanvasRenderingContext2D, body: Body, t: numb
   const r = body.radius;
   ctx.save();
   ctx.translate(x, y);
-  ctx.rotate(Math.sin(t * 0.04 + x * 0.01) * 0.18);
+  // Bolder silhouettes than v1 — this drew detailed glyphs that lost
+  // detail at game-scale (~6-8px world units). The brief is iconic at
+  // a glance: missile / dish / shield / claw / bolt / panel / battery /
+  // satellite, each with strong color contrast against the violet bg.
 
   switch (body.type) {
     case "propulsion": {
-      // Fuel canister — vertical cylinder, orange chevron stripes
-      const grad = ctx.createLinearGradient(-r * 0.5, 0, r * 0.5, 0);
-      grad.addColorStop(0, "#7a3a14");
-      grad.addColorStop(0.5, "#fb923c");
-      grad.addColorStop(1, "#7a3a14");
-      ctx.fillStyle = grad;
-      ctx.strokeStyle = "rgba(40, 20, 8, 0.85)";
-      ctx.lineWidth = 1.1;
+      // Missile / fuel rocket — pointed at origin, big flame trail.
+      ctx.rotate(Math.atan2(body.vy ?? 0, body.vx ?? 0) || -Math.PI / 2);
+      // Hull
+      ctx.fillStyle = "#fb923c";
+      ctx.strokeStyle = "rgba(40, 15, 5, 0.95)";
+      ctx.lineWidth = 1.4;
       ctx.beginPath();
-      ctx.roundRect(-r * 0.5, -r * 0.85, r * 1.0, r * 1.7, r * 0.18);
+      ctx.moveTo(r * 1.1, 0);
+      ctx.lineTo(-r * 0.4, r * 0.55);
+      ctx.lineTo(-r * 0.4, -r * 0.55);
+      ctx.closePath();
       ctx.fill();
       ctx.stroke();
-      // Chevron stripes
-      ctx.strokeStyle = "rgba(255, 240, 220, 0.9)";
-      ctx.lineWidth = 1.4;
-      for (let i = -1; i <= 1; i++) {
-        const cy = i * r * 0.4;
-        ctx.beginPath();
-        ctx.moveTo(-r * 0.35, cy + r * 0.08);
-        ctx.lineTo(0, cy - r * 0.08);
-        ctx.lineTo(r * 0.35, cy + r * 0.08);
-        ctx.stroke();
-      }
-      // Top nozzle
-      ctx.fillStyle = "#3a3a48";
-      ctx.fillRect(-r * 0.18, -r * 1.0, r * 0.36, r * 0.18);
+      // Tailfins
+      ctx.fillStyle = "#7a3a14";
+      ctx.beginPath();
+      ctx.moveTo(-r * 0.4, r * 0.55);
+      ctx.lineTo(-r * 0.85, r * 0.95);
+      ctx.lineTo(-r * 0.4, r * 0.2);
+      ctx.closePath();
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(-r * 0.4, -r * 0.55);
+      ctx.lineTo(-r * 0.85, -r * 0.95);
+      ctx.lineTo(-r * 0.4, -r * 0.2);
+      ctx.closePath();
+      ctx.fill();
+      // White nose tip
+      ctx.fillStyle = "rgba(255, 245, 230, 0.95)";
+      ctx.beginPath();
+      ctx.arc(r * 0.85, 0, r * 0.18, 0, Math.PI * 2);
+      ctx.fill();
+      // Flame trail
+      const flame = ctx.createLinearGradient(-r * 0.4, 0, -r * 1.4, 0);
+      flame.addColorStop(0, "rgba(255, 220, 100, 0.95)");
+      flame.addColorStop(0.5, "rgba(255, 100, 40, 0.7)");
+      flame.addColorStop(1, "rgba(255, 100, 40, 0)");
+      ctx.fillStyle = flame;
+      const f = 1 + Math.sin(t * 0.4 + x) * 0.15;
+      ctx.beginPath();
+      ctx.moveTo(-r * 0.4, r * 0.32);
+      ctx.lineTo(-r * 1.4 * f, 0);
+      ctx.lineTo(-r * 0.4, -r * 0.32);
+      ctx.closePath();
+      ctx.fill();
       break;
     }
     case "sensor": {
-      // Sensor disc — radar dish + ping ring
-      const grad = ctx.createRadialGradient(0, 0, 0, 0, 0, r * 0.7);
-      grad.addColorStop(0, "#fbbf24");
-      grad.addColorStop(1, "#854d09");
-      ctx.fillStyle = grad;
-      ctx.strokeStyle = "rgba(80, 50, 0, 0.85)";
-      ctx.lineWidth = 1;
+      // Concentric reticle / radar — bright yellow, high contrast.
+      ctx.strokeStyle = "#fde047";
+      ctx.fillStyle = "#fde047";
+      ctx.lineWidth = 2;
+      // Outer ring
       ctx.beginPath();
-      ctx.ellipse(0, 0, r * 0.7, r * 0.45, 0, 0, Math.PI * 2);
+      ctx.arc(0, 0, r * 0.95, 0, Math.PI * 2);
+      ctx.stroke();
+      // Crosshair
+      ctx.beginPath();
+      ctx.moveTo(-r * 1.1, 0);
+      ctx.lineTo(-r * 0.4, 0);
+      ctx.moveTo(r * 0.4, 0);
+      ctx.lineTo(r * 1.1, 0);
+      ctx.moveTo(0, -r * 1.1);
+      ctx.lineTo(0, -r * 0.4);
+      ctx.moveTo(0, r * 0.4);
+      ctx.lineTo(0, r * 1.1);
+      ctx.stroke();
+      // Solid center dot
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 0.28, 0, Math.PI * 2);
       ctx.fill();
-      ctx.stroke();
-      // Antenna
-      ctx.strokeStyle = "rgba(255, 245, 200, 0.9)";
-      ctx.lineWidth = 1.6;
+      // Sweep blip — rotating bright dot on the outer ring
+      const sweepA = (t * 0.06) % (Math.PI * 2);
+      ctx.fillStyle = "rgba(255, 255, 220, 0.95)";
       ctx.beginPath();
-      ctx.moveTo(0, 0);
-      ctx.lineTo(0, -r * 0.85);
-      ctx.stroke();
-      ctx.fillStyle = "rgba(255, 245, 200, 0.95)";
-      ctx.beginPath();
-      ctx.arc(0, -r * 0.85, r * 0.13, 0, Math.PI * 2);
+      ctx.arc(Math.cos(sweepA) * r * 0.95, Math.sin(sweepA) * r * 0.95, r * 0.18, 0, Math.PI * 2);
       ctx.fill();
-      // Ping ring
-      const pingPhase = (t % 60) / 60;
-      ctx.strokeStyle = `rgba(255, 245, 200, ${(0.6 * (1 - pingPhase)).toFixed(3)})`;
-      ctx.lineWidth = 1.2;
-      ctx.beginPath();
-      ctx.ellipse(0, 0, r * 0.7 * (1 + pingPhase * 0.4), r * 0.45 * (1 + pingPhase * 0.4), 0, 0, Math.PI * 2);
-      ctx.stroke();
       break;
     }
     case "membrane": {
-      // Hull armor plate — hex panel with rivets
-      const grad = ctx.createLinearGradient(0, -r * 0.7, 0, r * 0.7);
-      grad.addColorStop(0, "#8c8c98");
-      grad.addColorStop(0.5, "#5c5c68");
-      grad.addColorStop(1, "#3a3a44");
-      ctx.fillStyle = grad;
-      ctx.strokeStyle = "rgba(20, 20, 30, 0.9)";
-      ctx.lineWidth = 1.2;
+      // Shield — rounded pentagon with cross emblem.
+      ctx.fillStyle = "#94a3b8";
+      ctx.strokeStyle = "rgba(20, 25, 40, 0.95)";
+      ctx.lineWidth = 1.8;
       ctx.beginPath();
-      const hexR = r * 0.85;
-      for (let i = 0; i < 6; i++) {
-        const a = (i / 6) * Math.PI * 2 + Math.PI / 6;
-        const px = Math.cos(a) * hexR;
-        const py = Math.sin(a) * hexR;
-        if (i === 0) ctx.moveTo(px, py);
-        else ctx.lineTo(px, py);
-      }
+      ctx.moveTo(0, -r * 1.05);
+      ctx.lineTo(r * 0.95, -r * 0.45);
+      ctx.lineTo(r * 0.7, r * 0.85);
+      ctx.lineTo(-r * 0.7, r * 0.85);
+      ctx.lineTo(-r * 0.95, -r * 0.45);
       ctx.closePath();
       ctx.fill();
       ctx.stroke();
-      // Rivets at each vertex
-      ctx.fillStyle = "rgba(255, 240, 220, 0.55)";
-      for (let i = 0; i < 6; i++) {
-        const a = (i / 6) * Math.PI * 2 + Math.PI / 6;
-        ctx.beginPath();
-        ctx.arc(Math.cos(a) * hexR * 0.7, Math.sin(a) * hexR * 0.7, 1.1, 0, Math.PI * 2);
-        ctx.fill();
-      }
+      // Inner highlight
+      ctx.fillStyle = "rgba(220, 230, 245, 0.4)";
+      ctx.beginPath();
+      ctx.moveTo(0, -r * 0.85);
+      ctx.lineTo(-r * 0.5, -r * 0.3);
+      ctx.lineTo(-r * 0.4, r * 0.4);
+      ctx.lineTo(0, 0);
+      ctx.closePath();
+      ctx.fill();
+      // Cross emblem
+      ctx.fillStyle = "rgba(20, 30, 50, 0.85)";
+      ctx.fillRect(-r * 0.12, -r * 0.55, r * 0.24, r * 1.0);
+      ctx.fillRect(-r * 0.42, -r * 0.16, r * 0.84, r * 0.32);
       break;
     }
     case "mouth": {
-      // Cargo crate — cube with banding + warning chevrons
-      ctx.fillStyle = "#9a4a14";
-      ctx.strokeStyle = "rgba(40, 15, 5, 0.9)";
-      ctx.lineWidth = 1.2;
-      ctx.fillRect(-r * 0.7, -r * 0.7, r * 1.4, r * 1.4);
-      ctx.strokeRect(-r * 0.7, -r * 0.7, r * 1.4, r * 1.4);
-      // Top + bottom dark bands
-      ctx.fillStyle = "rgba(20, 10, 5, 0.6)";
-      ctx.fillRect(-r * 0.7, -r * 0.7, r * 1.4, r * 0.18);
-      ctx.fillRect(-r * 0.7, r * 0.52, r * 1.4, r * 0.18);
-      // Warning chevrons across the middle
-      ctx.fillStyle = "rgba(255, 220, 60, 0.95)";
-      for (let i = -1; i <= 1; i++) {
-        const cx = i * r * 0.4;
-        ctx.beginPath();
-        ctx.moveTo(cx - r * 0.12, -r * 0.15);
-        ctx.lineTo(cx + r * 0.05, 0);
-        ctx.lineTo(cx - r * 0.12, r * 0.15);
-        ctx.lineTo(cx + r * 0.0, 0);
-        ctx.closePath();
-        ctx.fill();
-      }
-      break;
-    }
-    case "stinger": {
-      // Plasma cell — capsule with glowing core
-      const grad = ctx.createLinearGradient(-r * 0.4, 0, r * 0.4, 0);
-      grad.addColorStop(0, "#3a1010");
-      grad.addColorStop(0.5, "#a02030");
-      grad.addColorStop(1, "#3a1010");
-      ctx.fillStyle = grad;
-      ctx.strokeStyle = "rgba(60, 5, 10, 0.9)";
-      ctx.lineWidth = 1.1;
+      // Tractor scoop — open claw silhouette, glowing core.
+      ctx.fillStyle = "#fb923c";
+      ctx.strokeStyle = "rgba(40, 15, 5, 0.95)";
+      ctx.lineWidth = 1.6;
+      // Upper jaw
       ctx.beginPath();
-      ctx.roundRect(-r * 0.4, -r * 0.85, r * 0.8, r * 1.7, r * 0.4);
-      ctx.fill();
-      ctx.stroke();
-      // Glowing core line
-      const flicker = 0.7 + 0.3 * Math.sin(t * 0.4);
-      const core = ctx.createLinearGradient(0, -r * 0.6, 0, r * 0.6);
-      core.addColorStop(0, `rgba(255, 100, 80, ${flicker.toFixed(3)})`);
-      core.addColorStop(0.5, `rgba(255, 240, 220, ${flicker.toFixed(3)})`);
-      core.addColorStop(1, `rgba(255, 100, 80, ${flicker.toFixed(3)})`);
-      ctx.fillStyle = core;
-      ctx.fillRect(-r * 0.1, -r * 0.55, r * 0.2, r * 1.1);
-      // Endcaps
-      ctx.fillStyle = "#1a0a0a";
-      ctx.fillRect(-r * 0.4, -r * 0.85, r * 0.8, r * 0.13);
-      ctx.fillRect(-r * 0.4, r * 0.72, r * 0.8, r * 0.13);
-      break;
-    }
-    case "chloroplast": {
-      // Solar panel — square grid of cells
-      ctx.fillStyle = "#0a2a3a";
-      ctx.strokeStyle = "rgba(150, 230, 200, 0.85)";
-      ctx.lineWidth = 1;
-      ctx.fillRect(-r * 0.75, -r * 0.75, r * 1.5, r * 1.5);
-      ctx.strokeRect(-r * 0.75, -r * 0.75, r * 1.5, r * 1.5);
-      // 3x3 cell grid
-      ctx.fillStyle = "rgba(80, 220, 160, 0.85)";
-      for (let row = 0; row < 3; row++) {
-        for (let col = 0; col < 3; col++) {
-          const cx = -r * 0.55 + col * r * 0.55;
-          const cy = -r * 0.55 + row * r * 0.55;
-          ctx.fillRect(cx - r * 0.2, cy - r * 0.2, r * 0.4, r * 0.4);
-        }
-      }
-      // Highlight catch
-      ctx.fillStyle = "rgba(220, 255, 220, 0.45)";
-      ctx.fillRect(-r * 0.75, -r * 0.75, r * 0.4, r * 0.15);
-      break;
-    }
-    case "mitochondrion": {
-      // Reactor core — octagonal coin with glowing center
-      const grad = ctx.createRadialGradient(0, 0, 0, 0, 0, r * 0.85);
-      grad.addColorStop(0, "#fff5b0");
-      grad.addColorStop(0.4, "#facc15");
-      grad.addColorStop(1, "#7a4a08");
-      ctx.fillStyle = grad;
-      ctx.strokeStyle = "rgba(60, 30, 0, 0.85)";
-      ctx.lineWidth = 1.2;
-      ctx.beginPath();
-      const sides = 8;
-      const oct = r * 0.85;
-      for (let i = 0; i < sides; i++) {
-        const a = (i / sides) * Math.PI * 2 + Math.PI / sides;
-        const px = Math.cos(a) * oct;
-        const py = Math.sin(a) * oct;
-        if (i === 0) ctx.moveTo(px, py);
-        else ctx.lineTo(px, py);
-      }
+      ctx.moveTo(-r * 0.95, -r * 0.95);
+      ctx.lineTo(r * 0.65, -r * 0.55);
+      ctx.lineTo(r * 0.4, -r * 0.15);
+      ctx.lineTo(-r * 0.6, -r * 0.4);
       ctx.closePath();
       ctx.fill();
       ctx.stroke();
-      // Glowing core ring
-      const corePulse = 0.7 + 0.3 * Math.sin(t * 0.2);
-      ctx.strokeStyle = `rgba(255, 245, 200, ${corePulse.toFixed(3)})`;
-      ctx.lineWidth = 1.6;
+      // Lower jaw
       ctx.beginPath();
-      ctx.arc(0, 0, r * 0.4, 0, Math.PI * 2);
+      ctx.moveTo(-r * 0.95, r * 0.95);
+      ctx.lineTo(r * 0.65, r * 0.55);
+      ctx.lineTo(r * 0.4, r * 0.15);
+      ctx.lineTo(-r * 0.6, r * 0.4);
+      ctx.closePath();
+      ctx.fill();
       ctx.stroke();
-      // Inner hex
-      ctx.fillStyle = `rgba(255, 245, 200, ${(0.6 * corePulse).toFixed(3)})`;
+      // Glowing core between jaws
+      const pulse = 0.7 + 0.3 * Math.sin(t * 0.3);
+      const glow = ctx.createRadialGradient(0, 0, 0, 0, 0, r * 0.35);
+      glow.addColorStop(0, `rgba(255, 240, 200, ${pulse.toFixed(3)})`);
+      glow.addColorStop(1, "rgba(255, 100, 40, 0)");
+      ctx.fillStyle = glow;
       ctx.beginPath();
-      ctx.arc(0, 0, r * 0.18, 0, Math.PI * 2);
+      ctx.arc(0, 0, r * 0.35, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+    }
+    case "stinger": {
+      // Laser bolt — bright red elongated lozenge with white core.
+      ctx.rotate(Math.atan2(body.vy ?? 0, body.vx ?? 0) || 0);
+      // Outer red glow
+      ctx.fillStyle = "rgba(220, 30, 50, 0.5)";
+      ctx.beginPath();
+      ctx.ellipse(0, 0, r * 1.1, r * 0.45, 0, 0, Math.PI * 2);
+      ctx.fill();
+      // Body
+      ctx.fillStyle = "#ef4444";
+      ctx.strokeStyle = "rgba(80, 0, 10, 0.95)";
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.ellipse(0, 0, r * 0.95, r * 0.3, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      // White-hot core line
+      const flicker = 0.7 + 0.3 * Math.sin(t * 0.6);
+      ctx.fillStyle = `rgba(255, 245, 220, ${flicker.toFixed(3)})`;
+      ctx.beginPath();
+      ctx.ellipse(0, 0, r * 0.85, r * 0.12, 0, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+    }
+    case "chloroplast": {
+      // Solar panel — bold square + cell grid.
+      ctx.fillStyle = "#0c1a2c";
+      ctx.strokeStyle = "rgba(80, 220, 160, 0.95)";
+      ctx.lineWidth = 1.6;
+      const side = r * 0.95;
+      ctx.fillRect(-side, -side, side * 2, side * 2);
+      ctx.strokeRect(-side, -side, side * 2, side * 2);
+      // 2×2 panel cells
+      ctx.fillStyle = "#22c55e";
+      for (let row = 0; row < 2; row++) {
+        for (let col = 0; col < 2; col++) {
+          const cx = -side * 0.5 + col * side;
+          const cy = -side * 0.5 + row * side;
+          ctx.fillRect(cx - side * 0.4, cy - side * 0.4, side * 0.8, side * 0.8);
+        }
+      }
+      // Cross-line dividers
+      ctx.strokeStyle = "rgba(0, 30, 15, 0.95)";
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.moveTo(0, -side);
+      ctx.lineTo(0, side);
+      ctx.moveTo(-side, 0);
+      ctx.lineTo(side, 0);
+      ctx.stroke();
+      break;
+    }
+    case "mitochondrion": {
+      // Battery — big yellow rectangle with terminals + bolt.
+      ctx.fillStyle = "#facc15";
+      ctx.strokeStyle = "rgba(60, 40, 0, 0.95)";
+      ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      ctx.roundRect(-r * 0.95, -r * 0.65, r * 1.9, r * 1.3, r * 0.18);
+      ctx.fill();
+      ctx.stroke();
+      // Top + bottom dark bands (terminals)
+      ctx.fillStyle = "rgba(30, 20, 0, 0.85)";
+      ctx.fillRect(-r * 0.95, -r * 0.65, r * 1.9, r * 0.18);
+      ctx.fillRect(-r * 0.95, r * 0.47, r * 1.9, r * 0.18);
+      // Lightning bolt (theme-coding the energy concept)
+      ctx.fillStyle = "#1c1305";
+      ctx.beginPath();
+      ctx.moveTo(-r * 0.18, -r * 0.35);
+      ctx.lineTo(r * 0.15, -r * 0.05);
+      ctx.lineTo(-r * 0.05, -r * 0.05);
+      ctx.lineTo(r * 0.18, r * 0.4);
+      ctx.lineTo(-r * 0.15, r * 0.05);
+      ctx.lineTo(r * 0.05, r * 0.05);
+      ctx.closePath();
       ctx.fill();
       break;
     }
     case "spore": {
-      // Drone capsule — small ovoid with antenna pair
-      const grad = ctx.createLinearGradient(0, -r * 0.6, 0, r * 0.6);
-      grad.addColorStop(0, "#fbcfe8");
-      grad.addColorStop(0.5, "#e879b3");
-      grad.addColorStop(1, "#7a2752");
-      ctx.fillStyle = grad;
-      ctx.strokeStyle = "rgba(50, 10, 30, 0.85)";
-      ctx.lineWidth = 1.1;
-      ctx.beginPath();
-      ctx.ellipse(0, 0, r * 0.55, r * 0.85, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
-      // Eye/lens
-      ctx.fillStyle = "rgba(255, 240, 200, 0.95)";
-      ctx.beginPath();
-      ctx.ellipse(0, -r * 0.3, r * 0.18, r * 0.13, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = "#1a0810";
-      ctx.beginPath();
-      ctx.arc(0, -r * 0.3, r * 0.07, 0, Math.PI * 2);
-      ctx.fill();
-      // Twin antennae
+      // Satellite drone — round body + cross-arms with solar wings.
+      // Solar wings
+      ctx.fillStyle = "#1e3a8a";
       ctx.strokeStyle = "rgba(255, 230, 240, 0.85)";
       ctx.lineWidth = 1.2;
       for (const side of [-1, 1]) {
-        ctx.beginPath();
-        ctx.moveTo(side * r * 0.15, -r * 0.7);
-        ctx.lineTo(side * r * 0.35, -r * 1.0);
-        ctx.stroke();
-        ctx.fillStyle = "rgba(255, 245, 220, 0.95)";
-        ctx.beginPath();
-        ctx.arc(side * r * 0.35, -r * 1.0, 1.4, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.fillRect(side * r * 0.45, -r * 0.4, side * r * 0.7, r * 0.8);
+        ctx.strokeRect(side * r * 0.45, -r * 0.4, side * r * 0.7, r * 0.8);
       }
+      // Body
+      const grad = ctx.createRadialGradient(-r * 0.15, -r * 0.15, 0, 0, 0, r * 0.55);
+      grad.addColorStop(0, "#fbcfe8");
+      grad.addColorStop(1, "#a7297e");
+      ctx.fillStyle = grad;
+      ctx.strokeStyle = "rgba(50, 10, 30, 0.95)";
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 0.55, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      // Camera lens
+      ctx.fillStyle = "rgba(255, 240, 200, 0.95)";
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 0.18, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#1a0810";
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 0.09, 0, Math.PI * 2);
+      ctx.fill();
       break;
     }
     case "core":
