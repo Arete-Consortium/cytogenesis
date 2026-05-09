@@ -21,6 +21,22 @@ export interface TutorialCopy {
   swim: string;
 }
 
+/** Evolution-store / part-pick UI copy. Theme-driven so the cat picks
+ *  sushi, the UFO installs modules, the spirit claims relics. */
+export interface EvolutionCopy {
+  /** Section header, e.g. "EVOLUTION", "UPGRADE STATION", "ASCENSION". */
+  title: string;
+  /** Subhead prompt, e.g. "choose an organelle", "install a module". */
+  prompt: string;
+  /** Per-NodeType label shown on each part offering tile. */
+  partLabels: Record<NodeTypeId, string>;
+  /** One-line blurb under the part name on each tile. */
+  partBlurbs: Record<NodeTypeId, string>;
+  /** Trait-toast labels — overrides the engine's TraitId→string map.
+   *  Partial because not every trait needs a flavored name per theme. */
+  traitLabels: Record<string, string>;
+}
+
 /** Optional draw overrides — bell, parts, predators. */
 export interface ThemeOverrides {
   drawCore?: (ctx: CanvasRenderingContext2D, world: World, core: Body) => void;
@@ -114,6 +130,8 @@ export interface Theme {
   tutorial: TutorialCopy;
   /** Boss-bar names per BossKind. Defaults to the microbe taxonomy when unset. */
   bossLabels: Record<BossKind, string>;
+  /** Evolution-store copy: section title, prompt, part labels + blurbs, trait toasts. */
+  evolution: EvolutionCopy;
   /** Inline SVG markup used as a preview chip in ThemePicker. ~28×28. */
   previewSvg: string;
   /** Optional render overrides (bell, parts, predators). */
@@ -182,6 +200,43 @@ const AQUATIC: Theme = {
     phage: "PHAGE",
     ciliate: "CILIATE",
     abyssEye: "ABYSS EYE",
+  },
+  evolution: {
+    title: "EVOLUTION",
+    prompt: "choose an organelle",
+    partLabels: {
+      core: "Core",
+      propulsion: "Propulsion",
+      sensor: "Sensor",
+      membrane: "Membrane",
+      mouth: "Mouth",
+      stinger: "Stinger",
+      chloroplast: "Chloroplast",
+      mitochondrion: "Mitochondrion",
+      spore: "Spore",
+    },
+    partBlurbs: {
+      core: "the bell",
+      propulsion: "faster, snappier",
+      sensor: "wider lock-on",
+      membrane: "armored hide",
+      mouth: "wider capture",
+      stinger: "hits harder",
+      chloroplast: "passive regen",
+      mitochondrion: "shorter cooldown",
+      spore: "orbiting swarm",
+    },
+    traitLabels: {
+      propulsion: "Propulsion",
+      wide_capture: "Wide Capture",
+      lock_on: "Lock-On",
+      spines: "Spines",
+      pincers: "Pincers",
+      barbed_tail: "Barbed Tail",
+      chloroshield: "Chloroshield",
+      regen: "Regeneration",
+      surge: "Surge",
+    },
   },
   previewSvg: `
 <svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -279,6 +334,43 @@ const GALACTIC: Theme = {
     ciliate: "SCOUT SWARM",
     abyssEye: "VOID WATCHER",
   },
+  evolution: {
+    title: "UPGRADE STATION",
+    prompt: "install a module",
+    partLabels: {
+      core: "Command Module",
+      propulsion: "Thrusters",
+      sensor: "Scanner Array",
+      membrane: "Hull Plating",
+      mouth: "Tractor Scoop",
+      stinger: "Laser Cannon",
+      chloroplast: "Solar Panel",
+      mitochondrion: "Reactor Core",
+      spore: "Drone Bay",
+    },
+    partBlurbs: {
+      core: "the saucer",
+      propulsion: "more sub-light",
+      sensor: "extended range",
+      membrane: "harder shell",
+      mouth: "wider scoop",
+      stinger: "more firepower",
+      chloroplast: "passive shield charge",
+      mitochondrion: "faster recharge",
+      spore: "drone escort",
+    },
+    traitLabels: {
+      propulsion: "Sub-Light Drive",
+      wide_capture: "Wide Tractor",
+      lock_on: "Targeting Lock",
+      spines: "Boarding Spikes",
+      pincers: "Tractor Claws",
+      barbed_tail: "Cluster Missiles",
+      chloroshield: "Force Field",
+      regen: "Self-Repair",
+      surge: "Warp Drive",
+    },
+  },
   previewSvg: galacticPreviewSvg,
   overrides: galacticOverrides,
 };
@@ -321,6 +413,43 @@ const SUSHI: Theme = {
     ciliate: "STARFISH",
     abyssEye: "ABYSS GAZER",
   },
+  evolution: {
+    title: "SUSHI BAR",
+    prompt: "claim a piece",
+    partLabels: {
+      core: "Maneki-neko",
+      propulsion: "Ebi Nigiri",
+      sensor: "Tamago",
+      membrane: "Onigiri",
+      mouth: "Maguro",
+      stinger: "Tekka Maki",
+      chloroplast: "Kappa Maki",
+      mitochondrion: "Uni Gunkan",
+      spore: "Gari",
+    },
+    partBlurbs: {
+      core: "lucky cat",
+      propulsion: "shrimp — quicker paws",
+      sensor: "egg — sharper eyes",
+      membrane: "rice — tougher fur",
+      mouth: "tuna — wider gobble",
+      stinger: "tuna roll — sharper bite",
+      chloroplast: "cucumber — slow heal",
+      mitochondrion: "sea urchin — faster recovery",
+      spore: "ginger — kitten cohort",
+    },
+    traitLabels: {
+      propulsion: "Quick Paws",
+      wide_capture: "Wide Mouth",
+      lock_on: "Crosshair Eye",
+      spines: "Cat Claws",
+      pincers: "Cat Fangs",
+      barbed_tail: "Sushi Skewer Tail",
+      chloroshield: "Matcha Halo",
+      regen: "Calligraphy Ring",
+      surge: "Paw-Print Wake",
+    },
+  },
   previewSvg: sushiPreviewSvg,
   overrides: sushiOverrides,
 };
@@ -360,6 +489,43 @@ const YOKAI: Theme = {
     phage: "ROKUROKUBI",
     ciliate: "KAMAITACHI",
     abyssEye: "TENGU",
+  },
+  evolution: {
+    title: "ASCENSION",
+    prompt: "claim a relic",
+    partLabels: {
+      core: "Hitodama",
+      propulsion: "Geta",
+      sensor: "Magatama",
+      membrane: "Ofuda",
+      mouth: "Mochi",
+      stinger: "Tanto",
+      chloroplast: "Sakaki",
+      mitochondrion: "Koban",
+      spore: "Kitsune-bi",
+    },
+    partBlurbs: {
+      core: "spirit-flame",
+      propulsion: "sandal — wind step",
+      sensor: "jewel — spirit sight",
+      membrane: "talisman — warded skin",
+      mouth: "rice cake — fuller offering",
+      stinger: "blade — sharper strike",
+      chloroplast: "branch — slow rejuvenation",
+      mitochondrion: "coin — quicker fortune",
+      spore: "fox-fire — wisp escort",
+    },
+    traitLabels: {
+      propulsion: "Wind Step",
+      wide_capture: "Open Mouth",
+      lock_on: "Spirit Sight",
+      spines: "Spirit Flames",
+      pincers: "Oni Horns",
+      barbed_tail: "Shimenawa Tail",
+      chloroshield: "Talisman Barrier",
+      regen: "Omikuji Ring",
+      surge: "Sakura Wake",
+    },
   },
   previewSvg: yokaiPreviewSvg,
   overrides: yokaiOverrides,

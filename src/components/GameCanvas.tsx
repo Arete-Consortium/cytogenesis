@@ -57,13 +57,7 @@ const formatDuration = (ms: number): string => {
   return `${m}:${s.toString().padStart(2, "0")}`;
 };
 
-const TRAIT_LABEL: Record<string, string> = {
-  propulsion: "Propulsion",
-  wide_capture: "Wide Capture",
-  lock_on: "Lock-On",
-};
-
-/** Body-editor part glyph + flavour. Keep blurbs short — one phone line. */
+/** Body-editor part glyph. Theme-neutral — same icon across skins. */
 const PART_GLYPH: Record<string, string> = {
   propulsion: "⤳",
   sensor: "◉",
@@ -74,16 +68,13 @@ const PART_GLYPH: Record<string, string> = {
   mitochondrion: "✺",
   spore: "❀",
 };
-const PART_BLURB: Record<string, string> = {
-  propulsion: "faster, snappier",
-  sensor: "wider lock-on",
-  membrane: "armored hide",
-  mouth: "wider capture",
-  stinger: "hits harder",
-  chloroplast: "passive regen",
-  mitochondrion: "shorter cooldown",
-  spore: "orbiting swarm",
-};
+
+/** Read the active theme's evolution copy. Each theme defines partLabels,
+ *  partBlurbs, and traitLabels so the cat picks sushi while the UFO
+ *  installs modules. */
+function evoCopy() {
+  return currentTheme().evolution;
+}
 
 interface Toast {
   id: number;
@@ -496,7 +487,7 @@ export default function GameCanvas() {
           else if (typeof ev === "string" && ev.startsWith("trait:")) {
             audio.trait();
             const id = ev.slice("trait:".length);
-            queueToast(TRAIT_LABEL[id]?.toUpperCase() ?? id.toUpperCase());
+            queueToast(evoCopy().traitLabels[id]?.toUpperCase() ?? id.toUpperCase());
           }
           else if (typeof ev === "string" && ev.startsWith("biome:")) {
             audio.transcend();
@@ -662,7 +653,7 @@ export default function GameCanvas() {
                 key={id}
                 className="rounded-full bg-cyan-300/10 px-2 py-0.5 text-[10px] text-cyan-200/85 ring-1 ring-cyan-300/20"
               >
-                {TRAIT_LABEL[id] ?? id}
+                {evoCopy().traitLabels[id] ?? id}
                 <span className="ml-1 text-cyan-200/50">
                   ×{stats.traits.levels[id as keyof typeof stats.traits.levels]}
                 </span>
@@ -743,7 +734,7 @@ export default function GameCanvas() {
                   key={id}
                   className="rounded-full bg-cyan-300/10 px-2.5 py-1 font-mono text-[11px] text-cyan-200/90 ring-1 ring-cyan-300/25"
                 >
-                  {TRAIT_LABEL[id] ?? id}
+                  {evoCopy().traitLabels[id] ?? id}
                   <span className="ml-1 text-cyan-200/55">
                     ×{stats.traits.levels[id as keyof typeof stats.traits.levels]}
                   </span>
@@ -797,10 +788,10 @@ export default function GameCanvas() {
       {editorState.open && (
         <div className="absolute inset-0 z-40 flex flex-col items-center justify-center bg-black/55 px-4 backdrop-blur-sm">
           <div className="mb-2 font-mono text-[11px] uppercase tracking-[0.35em] text-cyan-200/80">
-            evolution
+            {evoCopy().title}
           </div>
           <div className="mb-5 font-mono text-base uppercase tracking-[0.2em] text-zinc-100">
-            choose an organelle
+            {evoCopy().prompt}
           </div>
           <div className="flex flex-wrap items-stretch justify-center gap-3">
             {editorState.offerings.map((kind) => (
@@ -811,10 +802,10 @@ export default function GameCanvas() {
               >
                 <span className="text-3xl leading-none">{PART_GLYPH[kind] ?? "⬡"}</span>
                 <span className="font-mono text-xs uppercase tracking-[0.18em] text-cyan-200">
-                  {kind}
+                  {evoCopy().partLabels[kind as keyof ReturnType<typeof evoCopy>["partLabels"]] ?? kind}
                 </span>
                 <span className="max-w-[130px] text-center font-mono text-[10px] leading-tight text-zinc-400">
-                  {PART_BLURB[kind] ?? ""}
+                  {evoCopy().partBlurbs[kind as keyof ReturnType<typeof evoCopy>["partBlurbs"]] ?? ""}
                 </span>
               </button>
             ))}
