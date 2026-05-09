@@ -55,6 +55,51 @@ describe("theme registry", () => {
   });
 });
 
+describe("galactic overrides — smoke", () => {
+  it("every override runs without throwing on a populated world", () => {
+    const w = new World();
+    const core = w.entityBodies[0];
+    if (core) {
+      core.vx = 0.6;
+      core.vy = 0.4;
+    }
+    const traits = ["spines", "pincers", "barbed_tail", "chloroshield", "regen", "surge"] as const;
+    for (const id of traits) {
+      (w.traits.active as Set<string>).add(id);
+      w.traits.levels[id] = 3;
+    }
+    w.traits.tailLength = 80;
+    w.traits.tailDamage = 1;
+    w.traitActivationOrder = [...traits];
+    w.regenBuffer = 5;
+
+    const ov = THEMES.galactic.overrides;
+    if (!ov) throw new Error("galactic overrides missing");
+    const ctx = stubCtx();
+
+    expect(() => ov.drawCore?.(ctx, w, core!)).not.toThrow();
+    expect(() => ov.drawSpines?.(ctx, w)).not.toThrow();
+    expect(() => ov.drawPincers?.(ctx, w)).not.toThrow();
+    expect(() => ov.drawBarbedTail?.(ctx, w)).not.toThrow();
+    expect(() => ov.drawChloroshield?.(ctx, w)).not.toThrow();
+    expect(() => ov.drawRegenGlow?.(ctx, w)).not.toThrow();
+    expect(() => ov.drawSurgeWake?.(ctx, w)).not.toThrow();
+    expect(() => ov.drawCentipede?.(ctx, w)).not.toThrow();
+
+    const fakePred = {
+      id: "fake-1",
+      type: "spore" as const,
+      kind: "predator" as const,
+      radius: 12,
+      x: 0,
+      y: 0,
+      vx: 0.5,
+      vy: 0.2,
+    };
+    expect(() => ov.drawSkirmisher?.(ctx, fakePred, 0)).not.toThrow();
+  });
+});
+
 describe("aquatic overrides — smoke", () => {
   it("every override runs without throwing on a populated world", () => {
     const w = new World();

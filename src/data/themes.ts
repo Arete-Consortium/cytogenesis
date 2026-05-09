@@ -2,7 +2,7 @@ import type { NodeTypeId, Body } from "@/game/types";
 import { NODE_COLOR } from "./nodeTypes";
 import type { World } from "@/game/world";
 import { aquaticOverrides, aquaticPreviewSvg } from "./themes-aquatic";
-import { galacticPreviewSvg } from "./themes-galactic";
+import { galacticOverrides, galacticPreviewSvg } from "./themes-galactic";
 
 /**
  * Theme = palette + glyph mapping over the theme-neutral game state.
@@ -239,6 +239,7 @@ const GALACTIC: Theme = {
   },
   tutorial: { swim: "fly" },
   previewSvg: galacticPreviewSvg,
+  overrides: galacticOverrides,
 };
 
 export const THEMES: Record<ThemeId, Theme> = {
