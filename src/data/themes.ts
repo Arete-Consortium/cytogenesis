@@ -1,8 +1,9 @@
-import type { NodeTypeId, Body } from "@/game/types";
+import type { NodeTypeId, Body, BossKind } from "@/game/types";
 import { NODE_COLOR } from "./nodeTypes";
 import type { World } from "@/game/world";
-import { aquaticOverrides, aquaticPreviewSvg } from "./themes-aquatic";
+import { sushiOverrides, sushiPreviewSvg } from "./themes-sushi";
 import { galacticOverrides, galacticPreviewSvg } from "./themes-galactic";
+import { yokaiOverrides, yokaiPreviewSvg } from "./themes-yokai";
 
 /**
  * Theme = palette + glyph mapping over the theme-neutral game state.
@@ -12,7 +13,7 @@ import { galacticOverrides, galacticPreviewSvg } from "./themes-galactic";
  * dispatch via `(theme.drawX ?? defaultDrawX)(...)`.
  */
 
-export type ThemeId = "aquatic" | "galactic";
+export type ThemeId = "aquatic" | "galactic" | "sushi" | "yokai";
 
 /** Tutorial verb shown on the play screen. */
 export interface TutorialCopy {
@@ -31,6 +32,14 @@ export interface ThemeOverrides {
   drawSurgeWake?: (ctx: CanvasRenderingContext2D, world: World) => void;
   drawSkirmisher?: (ctx: CanvasRenderingContext2D, body: Body, t: number) => void;
   drawCentipede?: (ctx: CanvasRenderingContext2D, world: World) => void;
+  /**
+   * Free-cell glyph override. If defined, replaces the default
+   * `SHAPE_DRAWERS[body.type]` dispatch entirely — the override is
+   * responsible for switching on body.type internally and drawing each.
+   * Use to re-skin collectibles to theme-specific items (e.g. yokai
+   * folklore artifacts: mochi, magatama, ofuda, koban, kitsune-bi).
+   */
+  drawFreeCellShape?: (ctx: CanvasRenderingContext2D, body: Body, t: number) => void;
 }
 
 export interface Theme {
@@ -103,6 +112,8 @@ export interface Theme {
   nodeColors: Record<NodeTypeId, string>;
   /** Tutorial copy — theme-specific verbs. */
   tutorial: TutorialCopy;
+  /** Boss-bar names per BossKind. Defaults to the microbe taxonomy when unset. */
+  bossLabels: Record<BossKind, string>;
   /** Inline SVG markup used as a preview chip in ThemePicker. ~28×28. */
   previewSvg: string;
   /** Optional render overrides (bell, parts, predators). */
@@ -163,9 +174,31 @@ const AQUATIC: Theme = {
   telegraph: "rgba(239, 68, 68,",
   tracer: "rgba(96, 240, 255,",
   nodeColors: NODE_COLOR,
-  tutorial: { swim: "scamper" },
-  previewSvg: aquaticPreviewSvg,
-  overrides: aquaticOverrides,
+  tutorial: { swim: "drift" },
+  bossLabels: {
+    centipede: "SPIROCHETE",
+    swarmLord: "VOLVOX",
+    tideMaw: "AMOEBA",
+    phage: "PHAGE",
+    ciliate: "CILIATE",
+    abyssEye: "ABYSS EYE",
+  },
+  previewSvg: `
+<svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+  <defs>
+    <radialGradient id="a-bell" cx="50%" cy="40%" r="60%">
+      <stop offset="0%" stop-color="#dffbff" />
+      <stop offset="100%" stop-color="#0891b2" />
+    </radialGradient>
+  </defs>
+  <ellipse cx="16" cy="14" rx="9" ry="7" fill="url(#a-bell)" stroke="#0e7490" stroke-width="0.8" />
+  <path d="M 9 14 Q 9 24 8 28" stroke="#22d3ee" stroke-width="1.2" fill="none" />
+  <path d="M 13 14 Q 13 26 12 30" stroke="#22d3ee" stroke-width="1.2" fill="none" />
+  <path d="M 16 14 Q 16 26 16 30" stroke="#22d3ee" stroke-width="1.2" fill="none" />
+  <path d="M 19 14 Q 19 26 20 30" stroke="#22d3ee" stroke-width="1.2" fill="none" />
+  <path d="M 23 14 Q 23 24 24 28" stroke="#22d3ee" stroke-width="1.2" fill="none" />
+</svg>`.trim(),
+  // No overrides — aquatic uses default abstract bell + microbe predators.
 };
 
 /**
@@ -238,13 +271,105 @@ const GALACTIC: Theme = {
     spore: "#f472b6",         // seed pink
   },
   tutorial: { swim: "fly" },
+  bossLabels: {
+    centipede: "DREADNOUGHT",
+    swarmLord: "MOTHERSHIP",
+    tideMaw: "MIMIC CRAFT",
+    phage: "VIRION CRUISER",
+    ciliate: "SCOUT SWARM",
+    abyssEye: "VOID WATCHER",
+  },
   previewSvg: galacticPreviewSvg,
   overrides: galacticOverrides,
+};
+
+/**
+ * Sushi skin — Maneki-neko collecting sushi vs. octopus predators.
+ * Reuses the aquatic palette but overrides bell + skirmisher + centipede
+ * + all 6 composed parts via Theme.overrides. Free cells stay on the
+ * default palette (sushi-glyph override deferred to follow-up).
+ */
+const SUSHI: Theme = {
+  ...AQUATIC,
+  id: "sushi",
+  name: "Sushi",
+  bg: ["#15243f", "#0a162e", "#020812"],
+  bgFlat: "#101a30",
+  ambient: "rgba(255, 230, 200,",
+  shaft: "rgba(255, 220, 180,",
+  ca: { r: 230, g: 200, b: 140, a: 22 },
+  bell: AQUATIC.bell,
+  combo: AQUATIC.combo,
+  predator: {
+    ...AQUATIC.predator,
+    bodyDark: "#5a1230",
+    bodyLit: "#a23054",
+    halo0: "rgba(180, 60, 90, 0.42)",
+    halo1: "rgba(180, 60, 90, 0)",
+    rim: "rgba(255, 200, 220, 0.5)",
+  },
+  brute: AQUATIC.brute,
+  telegraph: "rgba(239, 68, 68,",
+  tracer: "rgba(255, 220, 150,",
+  nodeColors: NODE_COLOR,
+  tutorial: { swim: "scamper" },
+  bossLabels: {
+    centipede: "TAKO-RENJI",
+    swarmLord: "OCTOPUS QUEEN",
+    tideMaw: "MIMIC OCTOPUS",
+    phage: "RAZOR EEL",
+    ciliate: "STARFISH",
+    abyssEye: "ABYSS GAZER",
+  },
+  previewSvg: sushiPreviewSvg,
+  overrides: sushiOverrides,
+};
+
+/**
+ * Yokai skin — Hitodama spirit-flame collecting folkloric offerings vs.
+ * yokai. Night-time supernatural palette (deep purple, cyan glow,
+ * vermillion accents). Full override surface including drawFreeCellShape
+ * — free cells render as folklore artifacts (mochi, magatama, ofuda,
+ * tanto, sakaki, koban, kitsune-bi, geta).
+ */
+const YOKAI: Theme = {
+  ...AQUATIC,
+  id: "yokai",
+  name: "Yokai",
+  bg: ["#1a0a2e", "#0c0418", "#000004"],
+  bgFlat: "#180a26",
+  ambient: "rgba(220, 200, 255,",
+  shaft: "rgba(255, 200, 220,",
+  ca: { r: 200, g: 130, b: 220, a: 22 },
+  bell: AQUATIC.bell,
+  combo: AQUATIC.combo,
+  predator: {
+    ...AQUATIC.predator,
+    halo0: "rgba(200, 40, 60, 0.42)",
+    halo1: "rgba(200, 40, 60, 0)",
+  },
+  brute: AQUATIC.brute,
+  telegraph: "rgba(220, 60, 80,",
+  tracer: "rgba(220, 240, 255,",
+  nodeColors: NODE_COLOR,
+  tutorial: { swim: "drift" },
+  bossLabels: {
+    centipede: "HYAKKI YAGYOU",
+    swarmLord: "JOROGUMO",
+    tideMaw: "NUE",
+    phage: "ROKUROKUBI",
+    ciliate: "KAMAITACHI",
+    abyssEye: "TENGU",
+  },
+  previewSvg: yokaiPreviewSvg,
+  overrides: yokaiOverrides,
 };
 
 export const THEMES: Record<ThemeId, Theme> = {
   aquatic: AQUATIC,
   galactic: GALACTIC,
+  sushi: SUSHI,
+  yokai: YOKAI,
 };
 
 let _current: Theme = AQUATIC;

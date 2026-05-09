@@ -124,8 +124,9 @@ export default function GameCanvas() {
     if (typeof window === "undefined") return;
     const m = localStorage.getItem(MUTE_KEY) === "1";
     audio.setMuted(m);
-    const saved = localStorage.getItem(THEME_KEY) as ThemeId | null;
-    setTheme(saved === "galactic" ? "galactic" : "aquatic");
+    const saved = localStorage.getItem(THEME_KEY);
+    const validThemes: ThemeId[] = ["aquatic", "galactic", "sushi", "yokai"];
+    setTheme((validThemes as string[]).includes(saved ?? "") ? (saved as ThemeId) : "aquatic");
     /* eslint-disable react-hooks/set-state-in-effect */
     setMuted(m);
     setShowTutorial(localStorage.getItem(TUTORIAL_KEY) !== "1");

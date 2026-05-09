@@ -1,5 +1,5 @@
 /**
- * Aquatic skin v1 — Maneki-neko (lucky cat) collecting sushi vs.
+ * Sushi skin v1 — Maneki-neko (lucky cat) collecting sushi vs.
  * octopus predators. All draw functions are pure: no mutation, no
  * audio. They replace the default bell + parts + skirmisher + centipede
  * via Theme.overrides; everything else (brute, hive, mirror, free
@@ -607,7 +607,7 @@ function drawPawPrintWake(ctx: CanvasRenderingContext2D, world: World): void {
 
 // ── Bundle ───────────────────────────────────────────────────────────
 
-export const aquaticOverrides: ThemeOverrides = {
+export const sushiOverrides: ThemeOverrides = {
   drawCore: drawCatCore,
   drawSpines: drawCatClaws,
   drawPincers: drawCatFangs,
@@ -619,7 +619,7 @@ export const aquaticOverrides: ThemeOverrides = {
   drawCentipede: drawTakoRenji,
 };
 
-export const aquaticPreviewSvg = `
+export const sushiPreviewSvg = `
 <svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
   <ellipse cx="16" cy="22" rx="8.5" ry="6" fill="#fff5d6" stroke="#8c5a1e" stroke-width="0.8" />
   <circle cx="20" cy="14" r="5.5" fill="#fff5d6" stroke="#8c5a1e" stroke-width="0.8" />

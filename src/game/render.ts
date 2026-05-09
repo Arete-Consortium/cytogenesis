@@ -580,7 +580,9 @@ function drawCell(
   const r = b.radius;
   const haloAlpha = b.kind === "captured" ? 0.55 : 0.32;
   BODY_HALO(ctx, x, y, r, currentTheme().nodeColors[b.type], haloAlpha);
-  SHAPE_DRAWERS[b.type](ctx, b, t);
+  const shapeOverride = currentTheme().overrides?.drawFreeCellShape;
+  if (shapeOverride) shapeOverride(ctx, b, t);
+  else SHAPE_DRAWERS[b.type](ctx, b, t);
   if (dragging) {
     ctx.lineWidth = 2.2;
     ctx.strokeStyle = "#f4f4f5";
@@ -2598,36 +2600,40 @@ export function drawBossHealthBar(
   vw: number,
 ): void {
   // Pick whichever boss is alive — only one at a time.
+  // Boss names are theme-driven: each Theme defines bossLabels keyed by
+  // BossKind so the cat skin reads "TAKO-RENJI" while the UFO skin reads
+  // "DREADNOUGHT", etc.
   let hp = 0;
   let maxHp = 1;
   let label = "";
   let enraged = false;
+  const bossNames = currentTheme().bossLabels;
   if (world.centipede) {
     const c = world.centipede;
     hp = Math.max(0, c.head.health ?? 0);
     maxHp = Math.max(1, c.maxHealth);
     enraged = c.enragedFlashed;
-    label = `SPIROCHETE · LV ${c.level}${c.cycleRound > 0 ? ` · CYCLE ${c.cycleRound}` : ""}`;
+    label = `${bossNames.centipede} · LV ${c.level}${c.cycleRound > 0 ? ` · CYCLE ${c.cycleRound}` : ""}`;
   } else if (world.hiveQueen) {
     const h = world.hiveQueen;
     hp = Math.max(0, h.body.health ?? 0);
     maxHp = Math.max(1, h.maxHealth);
-    label = `VOLVOX · LV ${h.level}${h.cycleRound > 0 ? ` · CYCLE ${h.cycleRound}` : ""}${h.drones.length > 0 ? ` · ${h.drones.length} GONIDIA` : " · EXPOSED"}`;
+    label = `${bossNames.swarmLord} · LV ${h.level}${h.cycleRound > 0 ? ` · CYCLE ${h.cycleRound}` : ""}${h.drones.length > 0 ? ` · ${h.drones.length} ESCORTS` : " · EXPOSED"}`;
   } else if (world.mirror) {
     const m = world.mirror;
     hp = Math.max(0, m.body.health ?? 0);
     maxHp = Math.max(1, m.maxHealth);
-    label = `AMOEBA · LV ${m.level}${m.cycleRound > 0 ? ` · CYCLE ${m.cycleRound}` : ""}`;
+    label = `${bossNames.tideMaw} · LV ${m.level}${m.cycleRound > 0 ? ` · CYCLE ${m.cycleRound}` : ""}`;
   } else if (world.phage) {
     const p = world.phage;
     hp = Math.max(0, p.body.health ?? 0);
     maxHp = Math.max(1, p.maxHealth);
-    label = `PHAGE · LV ${p.level}${p.cycleRound > 0 ? ` · CYCLE ${p.cycleRound}` : ""}`;
+    label = `${bossNames.phage} · LV ${p.level}${p.cycleRound > 0 ? ` · CYCLE ${p.cycleRound}` : ""}`;
   } else if (world.ciliate) {
     const c = world.ciliate;
     hp = Math.max(0, c.body.health ?? 0);
     maxHp = Math.max(1, c.maxHealth);
-    label = `CILIATE · LV ${c.level}${c.cycleRound > 0 ? ` · CYCLE ${c.cycleRound}` : ""}${c.cellsEaten > 0 ? ` · ${c.cellsEaten} EATEN` : ""}`;
+    label = `${bossNames.ciliate} · LV ${c.level}${c.cycleRound > 0 ? ` · CYCLE ${c.cycleRound}` : ""}${c.cellsEaten > 0 ? ` · ${c.cellsEaten} EATEN` : ""}`;
   } else {
     return;
   }
