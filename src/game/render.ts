@@ -1044,7 +1044,11 @@ export function drawBodies(
   }
   // Composed parts under the bell (chloroshield halo + barbed tail)
   drawComposedPartsUnder(ctx, world);
-  if (core) drawCore(ctx, world, core);
+  if (core) {
+    const override = currentTheme().overrides?.drawCore;
+    if (override) override(ctx, world, core);
+    else drawCore(ctx, world, core);
+  }
   drawPlacedParts(ctx, world);
   // Composed parts over the bell (spines, pincers, regen ring, surge wake)
   drawComposedPartsOver(ctx, world);
@@ -1131,7 +1135,11 @@ export function drawPredators(ctx: CanvasRenderingContext2D, world: World): void
   // connect smoothly. Hive Queen draws its own queen + drones in a
   // single pass. Mirror gets a special bell render that mirrors the
   // player's morph.
-  if (world.centipede) drawCentipede(ctx, world);
+  if (world.centipede) {
+    const override = currentTheme().overrides?.drawCentipede;
+    if (override) override(ctx, world);
+    else drawCentipede(ctx, world);
+  }
   if (world.hiveQueen) drawHiveQueen(ctx, world);
   if (world.mirror) drawMirror(ctx, world);
   if (world.phage) drawPhage(ctx, world);
@@ -1147,7 +1155,11 @@ export function drawPredators(ctx: CanvasRenderingContext2D, world: World): void
     if (p.bossKind === "ciliate") continue;
     if (p.bossKind === "abyssEye") drawAbyssEye(ctx, p, t);
     else if (p.variant === "brute") drawBrutePredator(ctx, p, t);
-    else drawSkirmisherPredator(ctx, p, t);
+    else {
+      const override = currentTheme().overrides?.drawSkirmisher;
+      if (override) override(ctx, p, t);
+      else drawSkirmisherPredator(ctx, p, t);
+    }
   }
 }
 

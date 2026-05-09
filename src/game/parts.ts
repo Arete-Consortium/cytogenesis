@@ -7,6 +7,7 @@
  */
 
 import type { World } from "./world";
+import { currentTheme } from "@/data/themes";
 
 const PART_TRAITS = [
   "spines",
@@ -43,16 +44,18 @@ export function visiblePartTraits(world: World): PartTraitId[] {
  */
 export function drawComposedPartsUnder(ctx: CanvasRenderingContext2D, world: World): void {
   const visible = visiblePartTraits(world);
-  if (visible.includes("chloroshield")) drawChloroshield(ctx, world);
-  if (visible.includes("barbed_tail")) drawBarbedTail(ctx, world);
+  const ov = currentTheme().overrides;
+  if (visible.includes("chloroshield")) (ov?.drawChloroshield ?? drawChloroshield)(ctx, world);
+  if (visible.includes("barbed_tail")) (ov?.drawBarbedTail ?? drawBarbedTail)(ctx, world);
 }
 
 export function drawComposedPartsOver(ctx: CanvasRenderingContext2D, world: World): void {
   const visible = visiblePartTraits(world);
-  if (visible.includes("spines")) drawSpines(ctx, world);
-  if (visible.includes("pincers")) drawPincers(ctx, world);
-  if (visible.includes("regen")) drawRegenGlow(ctx, world);
-  if (visible.includes("surge")) drawSurgeWake(ctx, world);
+  const ov = currentTheme().overrides;
+  if (visible.includes("spines")) (ov?.drawSpines ?? drawSpines)(ctx, world);
+  if (visible.includes("pincers")) (ov?.drawPincers ?? drawPincers)(ctx, world);
+  if (visible.includes("regen")) (ov?.drawRegenGlow ?? drawRegenGlow)(ctx, world);
+  if (visible.includes("surge")) (ov?.drawSurgeWake ?? drawSurgeWake)(ctx, world);
 }
 
 // ── Individual parts ─────────────────────────────────────────────────

@@ -1,13 +1,37 @@
-import type { NodeTypeId } from "@/game/types";
+import type { NodeTypeId, Body } from "@/game/types";
 import { NODE_COLOR } from "./nodeTypes";
+import type { World } from "@/game/world";
+import { aquaticOverrides, aquaticPreviewSvg } from "./themes-aquatic";
+import { galacticPreviewSvg } from "./themes-galactic";
 
 /**
  * Theme = palette + glyph mapping over the theme-neutral game state.
  * Per CLAUDE.md: themes are paint, not logic. Game systems must NEVER
- * branch on theme — only render.ts reads from here.
+ * branch on theme — only render.ts reads from here. Themes may
+ * additionally provide optional draw overrides — render.ts and parts.ts
+ * dispatch via `(theme.drawX ?? defaultDrawX)(...)`.
  */
 
 export type ThemeId = "aquatic" | "galactic";
+
+/** Tutorial verb shown on the play screen. */
+export interface TutorialCopy {
+  /** Verb fragment for the swim hint, e.g. "scamper" / "fly" / "drift". */
+  swim: string;
+}
+
+/** Optional draw overrides — bell, parts, predators. */
+export interface ThemeOverrides {
+  drawCore?: (ctx: CanvasRenderingContext2D, world: World, core: Body) => void;
+  drawSpines?: (ctx: CanvasRenderingContext2D, world: World) => void;
+  drawPincers?: (ctx: CanvasRenderingContext2D, world: World) => void;
+  drawBarbedTail?: (ctx: CanvasRenderingContext2D, world: World) => void;
+  drawChloroshield?: (ctx: CanvasRenderingContext2D, world: World) => void;
+  drawRegenGlow?: (ctx: CanvasRenderingContext2D, world: World) => void;
+  drawSurgeWake?: (ctx: CanvasRenderingContext2D, world: World) => void;
+  drawSkirmisher?: (ctx: CanvasRenderingContext2D, body: Body, t: number) => void;
+  drawCentipede?: (ctx: CanvasRenderingContext2D, world: World) => void;
+}
 
 export interface Theme {
   id: ThemeId;
@@ -77,6 +101,12 @@ export interface Theme {
   tracer: string;
   /** Node-type color map. Same NodeTypeId, different color. */
   nodeColors: Record<NodeTypeId, string>;
+  /** Tutorial copy — theme-specific verbs. */
+  tutorial: TutorialCopy;
+  /** Inline SVG markup used as a preview chip in ThemePicker. ~28×28. */
+  previewSvg: string;
+  /** Optional render overrides (bell, parts, predators). */
+  overrides?: ThemeOverrides;
 }
 
 const AQUATIC: Theme = {
@@ -133,6 +163,9 @@ const AQUATIC: Theme = {
   telegraph: "rgba(239, 68, 68,",
   tracer: "rgba(96, 240, 255,",
   nodeColors: NODE_COLOR,
+  tutorial: { swim: "scamper" },
+  previewSvg: aquaticPreviewSvg,
+  overrides: aquaticOverrides,
 };
 
 /**
@@ -204,6 +237,8 @@ const GALACTIC: Theme = {
     mitochondrion: "#facc15", // reactor gold
     spore: "#f472b6",         // seed pink
   },
+  tutorial: { swim: "fly" },
+  previewSvg: galacticPreviewSvg,
 };
 
 export const THEMES: Record<ThemeId, Theme> = {

@@ -22,7 +22,7 @@ import type { TraitState } from "@/game/traits";
 import { emptyTraitState } from "@/game/traits";
 import { audio } from "@/lib/audio";
 import { recordRun, type BestRun } from "@/meta/persist";
-import { setTheme, type ThemeId } from "@/data/themes";
+import { currentTheme, setTheme, type ThemeId } from "@/data/themes";
 
 const MUTE_KEY = "cytogenesis:muted";
 const TUTORIAL_KEY = "cytogenesis:tutorialSeen";
@@ -856,7 +856,7 @@ export default function GameCanvas() {
       {showTutorial && stats.runStatus === "running" && (
         <div className="pointer-events-none absolute inset-0 z-15 flex items-end justify-center pb-32 sm:pb-40">
           <div className="animate-tutorial-pulse rounded-2xl border border-cyan-300/40 bg-black/40 px-6 py-4 text-center font-mono text-xs uppercase tracking-[0.2em] text-cyan-200 backdrop-blur-sm">
-            <div>drag anywhere to swim</div>
+            <div>drag anywhere to {currentTheme().tutorial.swim}</div>
             <div className="mt-1 text-[10px] tracking-[0.15em] text-zinc-400 normal-case">
               attack button appears once stingers lock on
             </div>
