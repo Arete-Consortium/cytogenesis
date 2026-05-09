@@ -922,6 +922,453 @@ function drawSushiFreeCell(ctx: CanvasRenderingContext2D, body: Body, t: number)
   ctx.restore();
 }
 
+// ── Big Octopus brute ────────────────────────────────────────────────
+
+function drawBigOctopus(ctx: CanvasRenderingContext2D, p: Body, t: number): void {
+  const x = p.x ?? 0;
+  const y = p.y ?? 0;
+  const r = p.radius;
+  const angle = Math.atan2(p.vy ?? 0, p.vx ?? 0) || 0;
+
+  const halo = ctx.createRadialGradient(x, y, r * 0.5, x, y, r * 2.0);
+  halo.addColorStop(0, "rgba(180, 20, 20, 0.5)");
+  halo.addColorStop(1, "rgba(180, 20, 20, 0)");
+  ctx.fillStyle = halo;
+  ctx.beginPath();
+  ctx.arc(x, y, r * 2.0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angle);
+
+  // 8 thicker tentacles
+  ctx.strokeStyle = "rgba(60, 15, 35, 0.92)";
+  ctx.lineWidth = r * 0.24;
+  ctx.lineCap = "round";
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8 - 0.5) * Math.PI * 1.5 + Math.PI;
+    const wave = Math.sin(t * 0.15 + i * 0.7) * r * 0.5;
+    const tipX = Math.cos(a) * r * 1.9 + wave * 0.3;
+    const tipY = Math.sin(a) * r * 1.9 + wave;
+    ctx.beginPath();
+    ctx.moveTo(Math.cos(a) * r * 0.7, Math.sin(a) * r * 0.7);
+    ctx.quadraticCurveTo(Math.cos(a) * r * 1.4 + wave * 0.5, Math.sin(a) * r * 1.4 + wave * 0.7, tipX, tipY);
+    ctx.stroke();
+  }
+
+  // Bigger mantle
+  const bodyGrad = ctx.createRadialGradient(0, -r * 0.3, 0, 0, 0, r * 1.2);
+  bodyGrad.addColorStop(0, "#c43d68");
+  bodyGrad.addColorStop(1, "#601a30");
+  ctx.fillStyle = bodyGrad;
+  ctx.beginPath();
+  ctx.ellipse(0, -r * 0.1, r * 1.05, r * 1.15, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(50, 10, 25, 0.95)";
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  // Bigger eyes with glare
+  ctx.fillStyle = "rgba(255, 250, 240, 0.95)";
+  for (const side of [-1, 1]) {
+    ctx.beginPath();
+    ctx.arc(side * r * 0.36, -r * 0.45, r * 0.22, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.fillStyle = "#1a0810";
+  for (const side of [-1, 1]) {
+    ctx.beginPath();
+    ctx.arc(side * r * 0.38, -r * 0.45, r * 0.11, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.restore();
+}
+
+// ── Octopus Queen (drawHiveQueen replacement) ────────────────────────
+
+function drawOctopusQueen(ctx: CanvasRenderingContext2D, world: World): void {
+  const h = world.hiveQueen;
+  if (!h) return;
+  const t = world.tickN;
+  const body = h.body;
+  const cx = body.x ?? 0;
+  const cy = body.y ?? 0;
+  const r = body.radius;
+
+  const halo = ctx.createRadialGradient(cx, cy, r * 0.5, cx, cy, r * 2.6);
+  halo.addColorStop(0, "rgba(180, 30, 80, 0.4)");
+  halo.addColorStop(1, "rgba(180, 30, 80, 0)");
+  ctx.fillStyle = halo;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r * 2.6, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.save();
+  ctx.translate(cx, cy);
+
+  // 10 long royal tentacles
+  ctx.strokeStyle = "rgba(50, 5, 30, 0.95)";
+  ctx.lineWidth = r * 0.2;
+  ctx.lineCap = "round";
+  for (let i = 0; i < 10; i++) {
+    const a = (i / 10) * Math.PI * 2;
+    const wave = Math.sin(t * 0.1 + i * 0.6) * r * 0.35;
+    const tipR = r * 2.2;
+    const tipX = Math.cos(a) * tipR + Math.cos(a + Math.PI / 2) * wave;
+    const tipY = Math.sin(a) * tipR + Math.sin(a + Math.PI / 2) * wave;
+    ctx.beginPath();
+    ctx.moveTo(Math.cos(a) * r * 0.6, Math.sin(a) * r * 0.6);
+    ctx.quadraticCurveTo(Math.cos(a) * r * 1.4 + wave, Math.sin(a) * r * 1.4 + wave, tipX, tipY);
+    ctx.stroke();
+  }
+
+  // Royal mantle — purple-red with gold rim
+  const mantle = ctx.createRadialGradient(0, -r * 0.4, 0, 0, 0, r * 1.2);
+  mantle.addColorStop(0, "#a8245a");
+  mantle.addColorStop(1, "#3d0a25");
+  ctx.fillStyle = mantle;
+  ctx.beginPath();
+  ctx.ellipse(0, -r * 0.15, r * 1.1, r * 1.2, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Gold rim crown
+  ctx.strokeStyle = "#f5c648";
+  ctx.lineWidth = 2.5;
+  ctx.stroke();
+
+  // Crown spikes on top
+  ctx.fillStyle = "#f5c648";
+  ctx.strokeStyle = "rgba(120, 80, 0, 0.9)";
+  ctx.lineWidth = 1.2;
+  for (let i = -2; i <= 2; i++) {
+    const cx2 = i * r * 0.3;
+    ctx.beginPath();
+    ctx.moveTo(cx2 - r * 0.08, -r * 1.1);
+    ctx.lineTo(cx2, -r * 1.4);
+    ctx.lineTo(cx2 + r * 0.08, -r * 1.1);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  }
+
+  // Big royal eyes
+  ctx.fillStyle = "rgba(255, 250, 240, 0.95)";
+  for (const side of [-1, 1]) {
+    ctx.beginPath();
+    ctx.arc(side * r * 0.4, -r * 0.45, r * 0.24, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.fillStyle = "#1a0810";
+  for (const side of [-1, 1]) {
+    ctx.beginPath();
+    ctx.ellipse(side * r * 0.42, -r * 0.45, r * 0.1, r * 0.16, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // Lipstick mouth
+  ctx.fillStyle = "#dc2649";
+  ctx.beginPath();
+  ctx.ellipse(0, r * 0.15, r * 0.22, r * 0.08, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
+
+  // Baby octopus drones
+  for (const drone of h.drones) {
+    drawOctopus(ctx, drone, t);
+  }
+}
+
+// ── Mimic Octopus (drawMirror replacement) ───────────────────────────
+
+function drawMimicOctopus(ctx: CanvasRenderingContext2D, world: World): void {
+  const m = world.mirror;
+  if (!m) return;
+  const t = world.tickN;
+  const body = m.body;
+  const x = body.x ?? 0;
+  const y = body.y ?? 0;
+  const r = body.radius;
+
+  // Color-shifting halo (mimic-octopus is a chameleon)
+  const colorPhase = (t * 0.04) % (Math.PI * 2);
+  const hueR = 180 + Math.sin(colorPhase) * 60;
+  const hueG = 80 + Math.sin(colorPhase + 2) * 40;
+  const hueB = 100 + Math.sin(colorPhase + 4) * 60;
+  const halo = ctx.createRadialGradient(x, y, r * 0.5, x, y, r * 2.4);
+  halo.addColorStop(0, `rgba(${hueR}, ${hueG}, ${hueB}, 0.42)`);
+  halo.addColorStop(1, `rgba(${hueR}, ${hueG}, ${hueB}, 0)`);
+  ctx.fillStyle = halo;
+  ctx.beginPath();
+  ctx.arc(x, y, r * 2.4, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.save();
+  ctx.translate(x, y);
+
+  // 8 striped/banded tentacles (mimic octopus has signature stripes)
+  ctx.lineWidth = r * 0.2;
+  ctx.lineCap = "round";
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8 - 0.5) * Math.PI * 1.4 + Math.PI;
+    const wave = Math.sin(t * 0.16 + i * 0.7) * r * 0.5;
+    const tipX = Math.cos(a) * r * 1.7 + wave * 0.3;
+    const tipY = Math.sin(a) * r * 1.7 + wave;
+    // Outer (white)
+    ctx.strokeStyle = "rgba(245, 240, 235, 0.95)";
+    ctx.beginPath();
+    ctx.moveTo(Math.cos(a) * r * 0.65, Math.sin(a) * r * 0.65);
+    ctx.quadraticCurveTo(Math.cos(a) * r * 1.2 + wave * 0.5, Math.sin(a) * r * 1.2 + wave * 0.7, tipX, tipY);
+    ctx.stroke();
+    // Stripes
+    ctx.lineWidth = r * 0.08;
+    ctx.strokeStyle = "rgba(40, 20, 30, 0.9)";
+    for (let s = 0.2; s < 1; s += 0.25) {
+      const sx = Math.cos(a) * r * (0.65 + (1.7 - 0.65) * s) + wave * (0.5 * s);
+      const sy = Math.sin(a) * r * (0.65 + (1.7 - 0.65) * s) + wave * (0.7 * s);
+      const px = -Math.sin(a) * r * 0.18;
+      const py = Math.cos(a) * r * 0.18;
+      ctx.beginPath();
+      ctx.moveTo(sx + px, sy + py);
+      ctx.lineTo(sx - px, sy - py);
+      ctx.stroke();
+    }
+    ctx.lineWidth = r * 0.2;
+  }
+
+  // Mimic mantle — color-shifting fill
+  const bodyGrad = ctx.createRadialGradient(0, -r * 0.2, 0, 0, 0, r * 1.0);
+  bodyGrad.addColorStop(0, `rgb(${hueR + 40}, ${hueG + 30}, ${hueB + 30})`);
+  bodyGrad.addColorStop(1, `rgb(${Math.max(20, hueR - 80)}, ${Math.max(10, hueG - 40)}, ${Math.max(20, hueB - 50)})`);
+  ctx.fillStyle = bodyGrad;
+  ctx.beginPath();
+  ctx.ellipse(0, -r * 0.05, r * 0.95, r * 1.05, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(20, 5, 15, 0.85)";
+  ctx.lineWidth = 1.6;
+  ctx.stroke();
+
+  // Stripes on mantle
+  ctx.strokeStyle = "rgba(245, 240, 235, 0.55)";
+  ctx.lineWidth = r * 0.06;
+  for (let i = -1; i <= 1; i++) {
+    ctx.beginPath();
+    ctx.ellipse(0, i * r * 0.3 - r * 0.1, r * 0.85, r * 0.06, 0, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // Glowing eyes
+  ctx.fillStyle = `rgb(${hueR + 60}, ${hueG + 80}, ${hueB + 50})`;
+  for (const side of [-1, 1]) {
+    ctx.beginPath();
+    ctx.arc(side * r * 0.32, -r * 0.4, r * 0.2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.fillStyle = "#1a0810";
+  for (const side of [-1, 1]) {
+    ctx.beginPath();
+    ctx.arc(side * r * 0.34, -r * 0.4, r * 0.09, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.restore();
+}
+
+// ── Razor Eel (drawPhage replacement) ────────────────────────────────
+
+function drawRazorEel(ctx: CanvasRenderingContext2D, world: World): void {
+  const p = world.phage;
+  if (!p) return;
+  const t = world.tickN;
+  const body = p.body;
+  const x = body.x ?? 0;
+  const y = body.y ?? 0;
+  const r = body.radius;
+
+  const halo = ctx.createRadialGradient(x, y, r * 0.5, x, y, r * 2.0);
+  halo.addColorStop(0, "rgba(120, 200, 220, 0.3)");
+  halo.addColorStop(1, "rgba(120, 200, 220, 0)");
+  ctx.fillStyle = halo;
+  ctx.beginPath();
+  ctx.arc(x, y, r * 2.0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.save();
+  ctx.translate(x, y);
+
+  // Coiled eel body — sinuous serpent shape spiralled in on itself
+  const coilSeg = 14;
+  ctx.strokeStyle = "#1a3540";
+  ctx.lineWidth = r * 0.36;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  for (let i = 0; i < coilSeg; i++) {
+    const f = i / (coilSeg - 1);
+    const a = f * Math.PI * 4 + t * 0.02;
+    const radius = r * (0.2 + f * 0.85);
+    const px = Math.cos(a) * radius;
+    const py = Math.sin(a) * radius;
+    if (i === 0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  }
+  ctx.stroke();
+  // Spinal scales
+  ctx.strokeStyle = "rgba(180, 230, 240, 0.65)";
+  ctx.lineWidth = r * 0.1;
+  ctx.beginPath();
+  for (let i = 0; i < coilSeg; i++) {
+    const f = i / (coilSeg - 1);
+    const a = f * Math.PI * 4 + t * 0.02;
+    const radius = r * (0.2 + f * 0.85);
+    const px = Math.cos(a) * radius;
+    const py = Math.sin(a) * radius;
+    if (i === 0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  }
+  ctx.stroke();
+
+  // Head — angular fish-skull at outermost coil end
+  const headA = (coilSeg - 1) / (coilSeg - 1) * Math.PI * 4 + t * 0.02;
+  const headR = r * (0.2 + 0.85);
+  const hx = Math.cos(headA) * headR;
+  const hy = Math.sin(headA) * headR;
+  ctx.save();
+  ctx.translate(hx, hy);
+  ctx.rotate(headA + Math.PI / 2);
+  ctx.fillStyle = "#0a1a22";
+  ctx.strokeStyle = "rgba(180, 230, 240, 0.85)";
+  ctx.lineWidth = 1.4;
+  ctx.beginPath();
+  ctx.moveTo(0, -r * 0.45);
+  ctx.lineTo(r * 0.28, 0);
+  ctx.lineTo(0, r * 0.45);
+  ctx.lineTo(-r * 0.18, 0);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  // Glowing eye
+  ctx.fillStyle = "rgba(255, 240, 100, 0.95)";
+  ctx.beginPath();
+  ctx.arc(0, -r * 0.05, r * 0.08, 0, Math.PI * 2);
+  ctx.fill();
+  // Razor teeth
+  ctx.fillStyle = "rgba(255, 250, 240, 0.95)";
+  for (let i = -1; i <= 1; i++) {
+    ctx.beginPath();
+    ctx.moveTo(r * 0.05, i * r * 0.1);
+    ctx.lineTo(r * 0.28, i * r * 0.1 + r * 0.04);
+    ctx.lineTo(r * 0.05, i * r * 0.1 + r * 0.08);
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.restore();
+
+  ctx.restore();
+
+  // Virion projectiles → razor-tooth darts
+  for (const v of p.virions) {
+    const age = (world.wallMs - v.bornMs) / 1800;
+    const alpha = Math.max(0.4, 1 - age * 0.6);
+    const speed = Math.hypot(v.vx, v.vy);
+    if (speed > 0.01) {
+      const ux = v.vx / speed;
+      const uy = v.vy / speed;
+      // Dart trail
+      ctx.strokeStyle = `rgba(180, 230, 240, ${(alpha * 0.6).toFixed(3)})`;
+      ctx.lineWidth = 2;
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(v.x - ux * 16, v.y - uy * 16);
+      ctx.lineTo(v.x, v.y);
+      ctx.stroke();
+      ctx.lineCap = "butt";
+      // Tooth-shaped warhead
+      ctx.fillStyle = `rgba(255, 250, 240, ${alpha.toFixed(3)})`;
+      ctx.beginPath();
+      ctx.moveTo(v.x + ux * 4, v.y + uy * 4);
+      ctx.lineTo(v.x - uy * 2, v.y + ux * 2);
+      ctx.lineTo(v.x + uy * 2, v.y - ux * 2);
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+}
+
+// ── Starfish (drawCiliate replacement) ───────────────────────────────
+
+function drawStarfish(ctx: CanvasRenderingContext2D, world: World): void {
+  const c = world.ciliate;
+  if (!c) return;
+  const t = world.tickN;
+  const body = c.body;
+  const x = body.x ?? 0;
+  const y = body.y ?? 0;
+  const r = body.radius;
+  const angle = Math.atan2(body.vy ?? 0, body.vx ?? 0) || 0;
+
+  const halo = ctx.createRadialGradient(x, y, r * 0.5, x, y, r * 1.9);
+  halo.addColorStop(0, "rgba(220, 100, 60, 0.42)");
+  halo.addColorStop(1, "rgba(220, 100, 60, 0)");
+  ctx.fillStyle = halo;
+  ctx.beginPath();
+  ctx.arc(x, y, r * 1.9, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angle + t * 0.01);
+
+  // 5-armed star body
+  const arms = 5;
+  const innerR = r * 0.35;
+  const outerR = r * 1.05;
+  const grad = ctx.createRadialGradient(0, 0, 0, 0, 0, outerR);
+  grad.addColorStop(0, "#ff8a4a");
+  grad.addColorStop(0.6, "#dc4628");
+  grad.addColorStop(1, "#7a1a08");
+  ctx.fillStyle = grad;
+  ctx.strokeStyle = "rgba(60, 10, 5, 0.95)";
+  ctx.lineWidth = 1.6;
+  ctx.beginPath();
+  for (let i = 0; i < arms * 2; i++) {
+    const a = (i / (arms * 2)) * Math.PI * 2 - Math.PI / 2;
+    const radius = i % 2 === 0 ? outerR : innerR;
+    const px = Math.cos(a) * radius;
+    const py = Math.sin(a) * radius;
+    if (i === 0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  }
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  // Tube feet — small dots running along each arm
+  ctx.fillStyle = "rgba(255, 220, 150, 0.85)";
+  for (let i = 0; i < arms; i++) {
+    const a = (i / arms) * Math.PI * 2 - Math.PI / 2;
+    for (let k = 1; k <= 4; k++) {
+      const f = k / 4.5;
+      const px = Math.cos(a) * outerR * f;
+      const py = Math.sin(a) * outerR * f;
+      ctx.beginPath();
+      ctx.arc(px, py, 1.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  // Central mouth (underside up = visible)
+  ctx.fillStyle = "rgba(20, 5, 0, 0.85)";
+  ctx.beginPath();
+  ctx.arc(0, 0, r * 0.18, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "rgba(255, 220, 100, 0.85)";
+  ctx.beginPath();
+  ctx.arc(0, 0, r * 0.08, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
+}
+
 // ── Bundle ───────────────────────────────────────────────────────────
 
 export const sushiOverrides: ThemeOverrides = {
@@ -933,7 +1380,12 @@ export const sushiOverrides: ThemeOverrides = {
   drawRegenGlow: drawCalligraphyRing,
   drawSurgeWake: drawPawPrintWake,
   drawSkirmisher: drawOctopus,
+  drawBrutePredator: drawBigOctopus,
   drawCentipede: drawTakoRenji,
+  drawHiveQueen: drawOctopusQueen,
+  drawMirror: drawMimicOctopus,
+  drawPhage: drawRazorEel,
+  drawCiliate: drawStarfish,
   drawFreeCellShape: drawSushiFreeCell,
 };
 

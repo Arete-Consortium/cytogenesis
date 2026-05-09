@@ -759,6 +759,508 @@ function drawYokaiFreeCell(ctx: CanvasRenderingContext2D, body: Body, t: number)
   ctx.restore();
 }
 
+// ── Big Oni brute ────────────────────────────────────────────────────
+
+function drawBigOni(ctx: CanvasRenderingContext2D, p: Body, _t: number): void {
+  const x = p.x ?? 0;
+  const y = p.y ?? 0;
+  const r = p.radius;
+  const angle = Math.atan2(p.vy ?? 0, p.vx ?? 0) || 0;
+
+  const halo = ctx.createRadialGradient(x, y, r * 0.5, x, y, r * 2.0);
+  halo.addColorStop(0, "rgba(180, 20, 20, 0.5)");
+  halo.addColorStop(1, "rgba(180, 20, 20, 0)");
+  ctx.fillStyle = halo;
+  ctx.beginPath();
+  ctx.arc(x, y, r * 2.0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angle + Math.PI / 2);
+
+  // Oni-mask brute body — wider, more menacing
+  const grad = ctx.createRadialGradient(0, -r * 0.3, 0, 0, 0, r * 1.1);
+  grad.addColorStop(0, "#dc2624");
+  grad.addColorStop(1, "#5a0a08");
+  ctx.fillStyle = grad;
+  ctx.strokeStyle = "rgba(20, 5, 5, 0.9)";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(0, -r * 1.05);
+  ctx.bezierCurveTo(r * 1.0, -r * 0.6, r * 1.0, r * 0.4, 0, r * 1.05);
+  ctx.bezierCurveTo(-r * 1.0, r * 0.4, -r * 1.0, -r * 0.6, 0, -r * 1.05);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  // Two big horns
+  ctx.fillStyle = "rgba(245, 230, 200, 0.95)";
+  for (const side of [-1, 1]) {
+    ctx.beginPath();
+    ctx.moveTo(side * r * 0.5, -r * 0.7);
+    ctx.lineTo(side * r * 0.85, -r * 1.3);
+    ctx.lineTo(side * r * 0.65, -r * 0.45);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  }
+
+  // Glaring yellow eyes
+  ctx.fillStyle = "rgba(255, 240, 100, 0.95)";
+  for (const side of [-1, 1]) {
+    ctx.beginPath();
+    ctx.ellipse(side * r * 0.32, -r * 0.2, r * 0.18, r * 0.13, side * 0.4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.fillStyle = "#1a0810";
+  for (const side of [-1, 1]) {
+    ctx.beginPath();
+    ctx.arc(side * r * 0.32, -r * 0.2, r * 0.06, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Big fanged mouth
+  ctx.fillStyle = "rgba(20, 5, 5, 0.95)";
+  ctx.beginPath();
+  ctx.ellipse(0, r * 0.4, r * 0.45, r * 0.18, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "rgba(245, 230, 200, 0.95)";
+  for (let f = -1; f <= 1; f += 1) {
+    ctx.beginPath();
+    ctx.moveTo(f * r * 0.18, r * 0.32);
+    ctx.lineTo(f * r * 0.18 + r * 0.06, r * 0.55);
+    ctx.lineTo(f * r * 0.18 - r * 0.06, r * 0.55);
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+// ── Jorogumo (drawHiveQueen replacement) ─────────────────────────────
+
+function drawJorogumo(ctx: CanvasRenderingContext2D, world: World): void {
+  const h = world.hiveQueen;
+  if (!h) return;
+  const t = world.tickN;
+  const body = h.body;
+  const cx = body.x ?? 0;
+  const cy = body.y ?? 0;
+  const r = body.radius;
+
+  // Web haze
+  const halo = ctx.createRadialGradient(cx, cy, r * 0.5, cx, cy, r * 3.0);
+  halo.addColorStop(0, "rgba(180, 90, 130, 0.4)");
+  halo.addColorStop(1, "rgba(180, 90, 130, 0)");
+  ctx.fillStyle = halo;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r * 3.0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Web strands radiating outward
+  ctx.strokeStyle = "rgba(220, 200, 230, 0.45)";
+  ctx.lineWidth = 0.8;
+  for (let i = 0; i < 12; i++) {
+    const a = (i / 12) * Math.PI * 2;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(cx + Math.cos(a) * r * 2.5, cy + Math.sin(a) * r * 2.5);
+    ctx.stroke();
+  }
+  // Concentric web rings
+  for (let ring = 1; ring <= 3; ring++) {
+    ctx.beginPath();
+    ctx.arc(cx, cy, r * 0.8 * ring, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  ctx.save();
+  ctx.translate(cx, cy);
+
+  // 8 long spider legs
+  ctx.strokeStyle = "rgba(20, 0, 30, 0.95)";
+  ctx.lineWidth = r * 0.13;
+  ctx.lineCap = "round";
+  for (let i = 0; i < 8; i++) {
+    const baseA = (i / 8 - 0.5) * Math.PI * 1.5;
+    const legAngle = baseA + Math.sin(t * 0.1 + i) * 0.15;
+    const knee = r * 1.4;
+    const tip = r * 2.0;
+    const kneeX = Math.cos(legAngle) * knee;
+    const kneeY = Math.sin(legAngle) * knee - r * 0.5; // raised knees
+    const tipX = Math.cos(legAngle) * tip;
+    const tipY = Math.sin(legAngle) * tip + r * 0.3; // tip below
+    ctx.beginPath();
+    ctx.moveTo(Math.cos(legAngle) * r * 0.7, Math.sin(legAngle) * r * 0.7);
+    ctx.lineTo(kneeX, kneeY);
+    ctx.lineTo(tipX, tipY);
+    ctx.stroke();
+  }
+
+  // Spider body — bulbous abdomen
+  ctx.fillStyle = "#3a0a4a";
+  ctx.strokeStyle = "rgba(15, 0, 25, 0.95)";
+  ctx.lineWidth = 1.6;
+  ctx.beginPath();
+  ctx.ellipse(0, r * 0.25, r * 0.95, r * 1.15, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  // Red diamond mark
+  ctx.fillStyle = "#dc2649";
+  ctx.beginPath();
+  ctx.moveTo(0, r * 0.0);
+  ctx.lineTo(r * 0.25, r * 0.3);
+  ctx.lineTo(0, r * 0.6);
+  ctx.lineTo(-r * 0.25, r * 0.3);
+  ctx.closePath();
+  ctx.fill();
+
+  // Head (smaller, on top of body)
+  ctx.fillStyle = "rgba(245, 230, 235, 0.95)";
+  ctx.strokeStyle = "rgba(60, 20, 40, 0.85)";
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  ctx.arc(0, -r * 0.5, r * 0.45, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  // Spider's woman-face eyes (8 eyes in jorogumo lore)
+  ctx.fillStyle = "#1a0810";
+  for (const row of [0, 1]) {
+    for (const col of [-1.5, -0.5, 0.5, 1.5]) {
+      ctx.beginPath();
+      ctx.arc(col * r * 0.13, -r * 0.5 + row * r * 0.12 - r * 0.1, r * 0.05, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  // Lipstick mouth
+  ctx.fillStyle = "#a31525";
+  ctx.beginPath();
+  ctx.ellipse(0, -r * 0.3, r * 0.13, r * 0.04, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
+
+  // Drone hatchlings — kasa-obake
+  for (const drone of h.drones) {
+    drawKasaObake(ctx, drone, t);
+  }
+}
+
+// ── Nue (drawMirror replacement) — chimera mimic ────────────────────
+
+function drawNue(ctx: CanvasRenderingContext2D, world: World): void {
+  const m = world.mirror;
+  if (!m) return;
+  const t = world.tickN;
+  const body = m.body;
+  const x = body.x ?? 0;
+  const y = body.y ?? 0;
+  const r = body.radius;
+
+  // Misty halo
+  const halo = ctx.createRadialGradient(x, y, r * 0.5, x, y, r * 2.4);
+  halo.addColorStop(0, "rgba(80, 50, 30, 0.4)");
+  halo.addColorStop(1, "rgba(80, 50, 30, 0)");
+  ctx.fillStyle = halo;
+  ctx.beginPath();
+  ctx.arc(x, y, r * 2.4, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.save();
+  ctx.translate(x, y);
+
+  // Body — monkey/badger torso
+  const bodyGrad = ctx.createRadialGradient(0, -r * 0.3, 0, 0, 0, r * 1.1);
+  bodyGrad.addColorStop(0, "#7a4a28");
+  bodyGrad.addColorStop(1, "#2a1408");
+  ctx.fillStyle = bodyGrad;
+  ctx.strokeStyle = "rgba(20, 10, 5, 0.95)";
+  ctx.lineWidth = 1.8;
+  ctx.beginPath();
+  ctx.ellipse(0, 0, r * 0.95, r * 1.05, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  // Tiger stripes on body
+  ctx.strokeStyle = "rgba(20, 10, 5, 0.85)";
+  ctx.lineWidth = r * 0.07;
+  for (let i = -1; i <= 1; i++) {
+    ctx.beginPath();
+    ctx.moveTo(-r * 0.6, i * r * 0.3 - r * 0.05);
+    ctx.bezierCurveTo(-r * 0.2, i * r * 0.3 - r * 0.1, r * 0.2, i * r * 0.3, r * 0.6, i * r * 0.3 - r * 0.05);
+    ctx.stroke();
+  }
+
+  // Snake tail (curls around behind)
+  ctx.strokeStyle = "#2a3018";
+  ctx.lineWidth = r * 0.18;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  const tailWag = Math.sin(t * 0.1) * 0.3;
+  ctx.moveTo(0, r * 0.85);
+  ctx.bezierCurveTo(r * 0.55 + tailWag * 30, r * 1.2, r * 0.85, r * 0.5, r * 1.2, r * 0.95);
+  ctx.stroke();
+  // Snake head at the tip
+  ctx.fillStyle = "#3a4020";
+  ctx.beginPath();
+  ctx.ellipse(r * 1.2, r * 0.95, r * 0.16, r * 0.1, 0.3, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "rgba(255, 240, 100, 0.85)";
+  ctx.beginPath();
+  ctx.arc(r * 1.28, r * 0.92, r * 0.04, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Monkey-face head
+  ctx.fillStyle = "#a06030";
+  ctx.strokeStyle = "rgba(40, 20, 10, 0.95)";
+  ctx.lineWidth = 1.4;
+  ctx.beginPath();
+  ctx.arc(0, -r * 0.6, r * 0.45, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  // Pale face mask
+  ctx.fillStyle = "#e0c898";
+  ctx.beginPath();
+  ctx.ellipse(0, -r * 0.55, r * 0.32, r * 0.32, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Glowing red eyes
+  ctx.fillStyle = "rgba(220, 30, 50, 0.95)";
+  for (const side of [-1, 1]) {
+    ctx.beginPath();
+    ctx.arc(side * r * 0.13, -r * 0.6, r * 0.08, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // Pupils
+  ctx.fillStyle = "#1a0810";
+  for (const side of [-1, 1]) {
+    ctx.beginPath();
+    ctx.arc(side * r * 0.13, -r * 0.6, r * 0.04, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // Bared teeth grin
+  ctx.fillStyle = "rgba(245, 230, 200, 0.95)";
+  ctx.fillRect(-r * 0.12, -r * 0.42, r * 0.24, r * 0.05);
+
+  ctx.restore();
+}
+
+// ── Rokurokubi (drawPhage replacement) — long-neck, ranged ──────────
+
+function drawRokurokubi(ctx: CanvasRenderingContext2D, world: World): void {
+  const p = world.phage;
+  if (!p) return;
+  const t = world.tickN;
+  const body = p.body;
+  const x = body.x ?? 0;
+  const y = body.y ?? 0;
+  const r = body.radius;
+
+  const halo = ctx.createRadialGradient(x, y, r * 0.5, x, y, r * 2.0);
+  halo.addColorStop(0, "rgba(220, 80, 100, 0.35)");
+  halo.addColorStop(1, "rgba(220, 80, 100, 0)");
+  ctx.fillStyle = halo;
+  ctx.beginPath();
+  ctx.arc(x, y, r * 2.0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.save();
+  ctx.translate(x, y);
+
+  // Stationary body — kimono shape (rectangular with collar)
+  ctx.fillStyle = "#5a1840";
+  ctx.strokeStyle = "rgba(20, 0, 10, 0.95)";
+  ctx.lineWidth = 1.6;
+  ctx.beginPath();
+  ctx.moveTo(-r * 0.7, r * 0.95);
+  ctx.lineTo(-r * 0.7, -r * 0.4);
+  ctx.lineTo(-r * 0.45, -r * 0.55);
+  ctx.lineTo(r * 0.45, -r * 0.55);
+  ctx.lineTo(r * 0.7, -r * 0.4);
+  ctx.lineTo(r * 0.7, r * 0.95);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  // Sash
+  ctx.fillStyle = "#dc2649";
+  ctx.fillRect(-r * 0.7, r * 0.0, r * 1.4, r * 0.18);
+  ctx.strokeRect(-r * 0.7, r * 0.0, r * 1.4, r * 0.18);
+
+  // Long extending neck — sinusoidal stretch toward player
+  ctx.strokeStyle = "rgba(245, 230, 220, 0.95)";
+  ctx.lineWidth = r * 0.28;
+  ctx.lineCap = "round";
+  const neckExtend = 1.5 + Math.sin(t * 0.08) * 0.4;
+  const necks = 12;
+  ctx.beginPath();
+  for (let i = 0; i < necks; i++) {
+    const f = i / (necks - 1);
+    const wobble = Math.sin(f * Math.PI * 2 + t * 0.1) * r * 0.15;
+    const nx = wobble;
+    const ny = -r * 0.55 - f * r * neckExtend;
+    if (i === 0) ctx.moveTo(nx, ny);
+    else ctx.lineTo(nx, ny);
+  }
+  ctx.stroke();
+
+  // Head at the end of the neck
+  const headY = -r * 0.55 - r * neckExtend;
+  ctx.save();
+  ctx.translate(0, headY);
+  // Pale face
+  ctx.fillStyle = "rgba(245, 230, 220, 0.95)";
+  ctx.strokeStyle = "rgba(60, 20, 40, 0.85)";
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  ctx.arc(0, 0, r * 0.4, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  // Long black hair
+  ctx.fillStyle = "#0a0510";
+  ctx.beginPath();
+  ctx.moveTo(-r * 0.4, -r * 0.1);
+  ctx.lineTo(-r * 0.55, r * 0.6);
+  ctx.lineTo(-r * 0.2, r * 0.45);
+  ctx.lineTo(0, r * 0.6);
+  ctx.lineTo(r * 0.2, r * 0.45);
+  ctx.lineTo(r * 0.55, r * 0.6);
+  ctx.lineTo(r * 0.4, -r * 0.1);
+  ctx.bezierCurveTo(r * 0.3, -r * 0.5, -r * 0.3, -r * 0.5, -r * 0.4, -r * 0.1);
+  ctx.closePath();
+  ctx.fill();
+  // Eyes
+  ctx.fillStyle = "#1a0810";
+  for (const side of [-1, 1]) {
+    ctx.beginPath();
+    ctx.ellipse(side * r * 0.13, 0, r * 0.05, r * 0.08, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // Red lipstick
+  ctx.fillStyle = "#dc2649";
+  ctx.beginPath();
+  ctx.ellipse(0, r * 0.15, r * 0.1, r * 0.04, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  ctx.restore();
+
+  // Virion projectiles → spirit-flame motes
+  for (const v of p.virions) {
+    const age = (world.wallMs - v.bornMs) / 1800;
+    const alpha = Math.max(0.4, 1 - age * 0.6);
+    ctx.fillStyle = `rgba(255, 200, 220, ${alpha.toFixed(3)})`;
+    ctx.beginPath();
+    ctx.arc(v.x, v.y, 4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = `rgba(255, 245, 220, ${alpha.toFixed(3)})`;
+    ctx.beginPath();
+    ctx.arc(v.x, v.y, 1.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+// ── Kamaitachi (drawCiliate replacement) — sickle-weasel pack ───────
+
+function drawKamaitachi(ctx: CanvasRenderingContext2D, world: World): void {
+  const c = world.ciliate;
+  if (!c) return;
+  const t = world.tickN;
+  const body = c.body;
+  const x = body.x ?? 0;
+  const y = body.y ?? 0;
+  const r = body.radius;
+  const angle = Math.atan2(body.vy ?? 0, body.vx ?? 0) || 0;
+
+  const halo = ctx.createRadialGradient(x, y, r * 0.5, x, y, r * 1.9);
+  halo.addColorStop(0, "rgba(180, 220, 220, 0.32)");
+  halo.addColorStop(1, "rgba(180, 220, 220, 0)");
+  ctx.fillStyle = halo;
+  ctx.beginPath();
+  ctx.arc(x, y, r * 1.9, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angle);
+
+  // Lead weasel body — elongated quadruped
+  const grad = ctx.createLinearGradient(-r, 0, r, 0);
+  grad.addColorStop(0, "#3a2a18");
+  grad.addColorStop(0.5, "#7a5a30");
+  grad.addColorStop(1, "#3a2a18");
+  ctx.fillStyle = grad;
+  ctx.strokeStyle = "rgba(20, 10, 5, 0.85)";
+  ctx.lineWidth = 1.4;
+  ctx.beginPath();
+  ctx.ellipse(0, 0, r * 0.95, r * 0.45, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  // Head pointing forward
+  ctx.fillStyle = "#5a3a18";
+  ctx.beginPath();
+  ctx.ellipse(r * 0.7, -r * 0.05, r * 0.32, r * 0.25, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  // Eye
+  ctx.fillStyle = "rgba(255, 220, 60, 0.95)";
+  ctx.beginPath();
+  ctx.arc(r * 0.85, -r * 0.1, r * 0.07, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Twin sickle blades on the back
+  ctx.fillStyle = "rgba(245, 245, 250, 0.95)";
+  ctx.strokeStyle = "rgba(80, 100, 120, 0.95)";
+  ctx.lineWidth = 1.2;
+  for (const side of [-1, 1]) {
+    ctx.beginPath();
+    ctx.moveTo(0, -r * 0.4 * side);
+    ctx.bezierCurveTo(-r * 0.4, -r * 0.85 * side, -r * 0.6, -r * 0.6 * side, -r * 0.5, -r * 0.3 * side);
+    ctx.lineTo(0, -r * 0.4 * side);
+    ctx.fill();
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  // Two smaller weasel companions trailing behind in a slipstream
+  for (let i = 0; i < 2; i++) {
+    const trailA = angle + Math.PI + (i - 0.5) * 0.5;
+    const trailDist = r * (1.6 + i * 0.4);
+    const cx2 = x + Math.cos(trailA) * trailDist;
+    const cy2 = y + Math.sin(trailA) * trailDist;
+    ctx.save();
+    ctx.translate(cx2, cy2);
+    ctx.rotate(angle);
+    ctx.fillStyle = "rgba(80, 60, 30, 0.85)";
+    ctx.strokeStyle = "rgba(20, 10, 5, 0.7)";
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, r * 0.4, r * 0.18, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    // Eye
+    ctx.fillStyle = "rgba(255, 220, 60, 0.85)";
+    ctx.beginPath();
+    ctx.arc(r * 0.3, 0, r * 0.04, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // Wind-slash trail
+  const speed = Math.hypot(body.vx ?? 0, body.vy ?? 0);
+  if (speed > 0.05) {
+    ctx.strokeStyle = `rgba(220, 240, 255, ${(0.6 + 0.3 * Math.sin(t * 0.3)).toFixed(3)})`;
+    ctx.lineWidth = 1.4;
+    for (let s = 0; s < 3; s++) {
+      const sx = x - Math.cos(angle) * (r * 1.0 + s * r * 0.4);
+      const sy = y - Math.sin(angle) * (r * 1.0 + s * r * 0.4);
+      ctx.beginPath();
+      ctx.moveTo(sx - Math.sin(angle) * r * 0.3, sy + Math.cos(angle) * r * 0.3);
+      ctx.lineTo(sx + Math.sin(angle) * r * 0.3, sy - Math.cos(angle) * r * 0.3);
+      ctx.stroke();
+    }
+  }
+}
+
 // ── Bundle ───────────────────────────────────────────────────────────
 
 export const yokaiOverrides: ThemeOverrides = {
@@ -770,7 +1272,12 @@ export const yokaiOverrides: ThemeOverrides = {
   drawRegenGlow: drawOmikujiRing,
   drawSurgeWake: drawSakuraWake,
   drawSkirmisher: drawKasaObake,
+  drawBrutePredator: drawBigOni,
   drawCentipede: drawHyakkiYagyou,
+  drawHiveQueen: drawJorogumo,
+  drawMirror: drawNue,
+  drawPhage: drawRokurokubi,
+  drawCiliate: drawKamaitachi,
   drawFreeCellShape: drawYokaiFreeCell,
 };
 

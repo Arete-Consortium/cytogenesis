@@ -48,6 +48,12 @@ export interface ThemeOverrides {
   drawSurgeWake?: (ctx: CanvasRenderingContext2D, world: World) => void;
   drawSkirmisher?: (ctx: CanvasRenderingContext2D, body: Body, t: number) => void;
   drawCentipede?: (ctx: CanvasRenderingContext2D, world: World) => void;
+  drawHiveQueen?: (ctx: CanvasRenderingContext2D, world: World) => void;
+  drawMirror?: (ctx: CanvasRenderingContext2D, world: World) => void;
+  drawPhage?: (ctx: CanvasRenderingContext2D, world: World) => void;
+  drawCiliate?: (ctx: CanvasRenderingContext2D, world: World) => void;
+  drawBrutePredator?: (ctx: CanvasRenderingContext2D, body: Body, t: number) => void;
+  drawAbyssEye?: (ctx: CanvasRenderingContext2D, body: Body, t: number) => void;
   /**
    * Free-cell glyph override. If defined, replaces the default
    * `SHAPE_DRAWERS[body.type]` dispatch entirely — the override is

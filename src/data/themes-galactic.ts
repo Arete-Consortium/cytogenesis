@@ -839,6 +839,409 @@ function drawGalacticFreeCell(ctx: CanvasRenderingContext2D, body: Body, t: numb
   ctx.restore();
 }
 
+// ── Battlecruiser brute (regular non-boss heavy) ─────────────────────
+
+function drawBattlecruiser(ctx: CanvasRenderingContext2D, p: Body, t: number): void {
+  const x = p.x ?? 0;
+  const y = p.y ?? 0;
+  const r = p.radius;
+  const angle = Math.atan2(p.vy ?? 0, p.vx ?? 0) || 0;
+
+  const halo = ctx.createRadialGradient(x, y, r * 0.5, x, y, r * 2.0);
+  halo.addColorStop(0, "rgba(200, 70, 20, 0.5)");
+  halo.addColorStop(1, "rgba(200, 70, 20, 0)");
+  ctx.fillStyle = halo;
+  ctx.beginPath();
+  ctx.arc(x, y, r * 2.0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angle);
+
+  // Wide hull — chunkier than skirmisher
+  ctx.fillStyle = "#240a04";
+  ctx.strokeStyle = "rgba(254, 170, 100, 0.7)";
+  ctx.lineWidth = 1.6;
+  ctx.beginPath();
+  ctx.moveTo(r * 1.05, 0);
+  ctx.lineTo(r * 0.4, -r * 0.95);
+  ctx.lineTo(-r * 0.85, -r * 0.95);
+  ctx.lineTo(-r * 0.55, 0);
+  ctx.lineTo(-r * 0.85, r * 0.95);
+  ctx.lineTo(r * 0.4, r * 0.95);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  // Twin laser turrets on the hull
+  ctx.fillStyle = "#3a3a48";
+  for (const side of [-1, 1]) {
+    ctx.fillRect(-r * 0.15, side * r * 0.45 - r * 0.13, r * 0.55, r * 0.26);
+  }
+  ctx.fillStyle = "rgba(251, 191, 36, 0.95)";
+  for (const side of [-1, 1]) {
+    ctx.beginPath();
+    ctx.arc(r * 0.4, side * r * 0.45, r * 0.08, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Cockpit canopy
+  const canopy = ctx.createRadialGradient(r * 0.25, 0, 0, r * 0.25, 0, r * 0.45);
+  canopy.addColorStop(0, "rgba(196, 181, 253, 0.95)");
+  canopy.addColorStop(1, "rgba(91, 33, 182, 0.6)");
+  ctx.fillStyle = canopy;
+  ctx.beginPath();
+  ctx.ellipse(r * 0.25, 0, r * 0.45, r * 0.3, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Twin thrusters with pulsing flame
+  const thrustPulse = 0.7 + 0.3 * Math.sin(t * 0.3);
+  for (const side of [-1, 1]) {
+    const flameX = -r * 0.7;
+    const flameY = side * r * 0.55;
+    const fg = ctx.createRadialGradient(flameX, flameY, 0, flameX - r * 0.5, flameY, r * 0.4);
+    fg.addColorStop(0, `rgba(255, 200, 120, ${(0.95 * thrustPulse).toFixed(3)})`);
+    fg.addColorStop(1, "rgba(255, 100, 40, 0)");
+    ctx.fillStyle = fg;
+    ctx.beginPath();
+    ctx.ellipse(flameX - r * 0.3, flameY, r * 0.65, r * 0.18, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.restore();
+}
+
+// ── Mothership (drawHiveQueen replacement) ───────────────────────────
+
+function drawMothership(ctx: CanvasRenderingContext2D, world: World): void {
+  const h = world.hiveQueen;
+  if (!h) return;
+  const t = world.tickN;
+  const body = h.body;
+  const cx = body.x ?? 0;
+  const cy = body.y ?? 0;
+  const r = body.radius;
+
+  // Big purple aura
+  const halo = ctx.createRadialGradient(cx, cy, r * 0.5, cx, cy, r * 2.6);
+  halo.addColorStop(0, "rgba(167, 139, 250, 0.32)");
+  halo.addColorStop(1, "rgba(167, 139, 250, 0)");
+  ctx.fillStyle = halo;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r * 2.6, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Mothership disk — wide saucer, larger than UFO
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(t * 0.005); // slow rotation
+  // Outer disk
+  const diskGrad = ctx.createLinearGradient(0, -r * 0.4, 0, r * 0.4);
+  diskGrad.addColorStop(0, "#dcd4ff");
+  diskGrad.addColorStop(0.5, "#7c5cd9");
+  diskGrad.addColorStop(1, "#3b1c80");
+  ctx.fillStyle = diskGrad;
+  ctx.strokeStyle = "rgba(20, 10, 50, 0.95)";
+  ctx.lineWidth = 1.8;
+  ctx.beginPath();
+  ctx.ellipse(0, r * 0.05, r * 1.4, r * 0.4, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  // Underside ribbon
+  ctx.fillStyle = "rgba(20, 10, 40, 0.7)";
+  ctx.beginPath();
+  ctx.ellipse(0, r * 0.2, r * 1.3, r * 0.25, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Rotating perimeter lights
+  const lightCount = 12;
+  for (let i = 0; i < lightCount; i++) {
+    const phase = (i / lightCount) * Math.PI * 2;
+    const lx = Math.cos(phase) * r * 1.35;
+    const ly = Math.sin(phase) * 0.18 * r + r * 0.1;
+    const visibility = 0.5 + 0.5 * Math.cos(phase + t * 0.05);
+    if (visibility < 0.15) continue;
+    ctx.fillStyle = `rgba(251, 191, 36, ${(visibility * 0.95).toFixed(3)})`;
+    ctx.beginPath();
+    ctx.arc(lx, ly, 2.4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // Central command dome
+  const domeR = r * 0.85;
+  const dome = ctx.createRadialGradient(0, -domeR * 0.5, 0, 0, -domeR * 0.4, domeR);
+  dome.addColorStop(0, "rgba(255, 255, 255, 0.95)");
+  dome.addColorStop(0.5, "rgba(196, 181, 253, 0.85)");
+  dome.addColorStop(1, "rgba(91, 33, 182, 0.7)");
+  ctx.fillStyle = dome;
+  ctx.beginPath();
+  ctx.ellipse(0, -r * 0.15, domeR, domeR * 0.85, 0, Math.PI, 0);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(40, 20, 80, 0.6)";
+  ctx.lineWidth = 1.2;
+  ctx.stroke();
+  // Hangar bay glow underneath
+  const hangar = ctx.createRadialGradient(0, r * 0.3, 0, 0, r * 0.3, r * 0.6);
+  hangar.addColorStop(0, "rgba(251, 191, 36, 0.85)");
+  hangar.addColorStop(1, "rgba(251, 191, 36, 0)");
+  ctx.fillStyle = hangar;
+  ctx.beginPath();
+  ctx.arc(0, r * 0.3, r * 0.6, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  // Drone escorts — alien fighters orbiting in formation
+  for (const drone of h.drones) {
+    drawAlienFighter(ctx, drone, t);
+  }
+}
+
+// ── Mimic Craft (drawMirror replacement) ─────────────────────────────
+
+function drawMimicCraft(ctx: CanvasRenderingContext2D, world: World): void {
+  const m = world.mirror;
+  if (!m) return;
+  const t = world.tickN;
+  const body = m.body;
+  const x = body.x ?? 0;
+  const y = body.y ?? 0;
+  const r = body.radius;
+
+  // Distortion halo — green-tinted unstable energy
+  const halo = ctx.createRadialGradient(x, y, r * 0.5, x, y, r * 2.4);
+  halo.addColorStop(0, "rgba(110, 200, 130, 0.4)");
+  halo.addColorStop(0.6, "rgba(110, 200, 130, 0.18)");
+  halo.addColorStop(1, "rgba(110, 200, 130, 0)");
+  ctx.fillStyle = halo;
+  ctx.beginPath();
+  ctx.arc(x, y, r * 2.4, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.save();
+  ctx.translate(x, y);
+
+  // Cloaked saucer — gradient flickers between visible and translucent
+  const cloak = 0.5 + 0.4 * Math.sin(t * 0.15);
+  const diskGrad = ctx.createLinearGradient(0, -r * 0.4, 0, r * 0.4);
+  diskGrad.addColorStop(0, `rgba(220, 212, 255, ${cloak.toFixed(3)})`);
+  diskGrad.addColorStop(0.5, `rgba(120, 90, 200, ${cloak.toFixed(3)})`);
+  diskGrad.addColorStop(1, `rgba(60, 30, 100, ${cloak.toFixed(3)})`);
+  ctx.fillStyle = diskGrad;
+  ctx.strokeStyle = `rgba(140, 250, 180, ${(0.5 + 0.5 * Math.sin(t * 0.2)).toFixed(3)})`;
+  ctx.lineWidth = 1.6;
+  ctx.beginPath();
+  ctx.ellipse(0, r * 0.05, r * 1.05, r * 0.32, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  // Mimic dome — color flicker hints at the player's silhouette
+  const domeR = r * 0.7;
+  const domeGrad = ctx.createRadialGradient(0, -domeR * 0.5, 0, 0, -domeR * 0.4, domeR);
+  domeGrad.addColorStop(0, `rgba(220, 250, 220, ${cloak.toFixed(3)})`);
+  domeGrad.addColorStop(1, `rgba(60, 130, 90, ${(cloak * 0.7).toFixed(3)})`);
+  ctx.fillStyle = domeGrad;
+  ctx.beginPath();
+  ctx.ellipse(0, -r * 0.18, domeR, domeR * 0.85, 0, Math.PI, 0);
+  ctx.fill();
+
+  // Glitching scan-lines
+  ctx.strokeStyle = `rgba(140, 250, 180, ${(0.55 * cloak).toFixed(3)})`;
+  ctx.lineWidth = 0.8;
+  for (let i = -2; i <= 2; i++) {
+    const ly = i * r * 0.18 + (Math.sin(t * 0.3 + i) * 2);
+    ctx.beginPath();
+    ctx.moveTo(-r * 0.95, ly);
+    ctx.lineTo(r * 0.95, ly);
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
+// ── Virion Cruiser (drawPhage replacement) ───────────────────────────
+
+function drawVirionCruiser(ctx: CanvasRenderingContext2D, world: World): void {
+  const p = world.phage;
+  if (!p) return;
+  const t = world.tickN;
+  const body = p.body;
+  const x = body.x ?? 0;
+  const y = body.y ?? 0;
+  const r = body.radius;
+
+  // Hostile aura
+  const halo = ctx.createRadialGradient(x, y, r * 0.5, x, y, r * 2.0);
+  halo.addColorStop(0, "rgba(251, 100, 60, 0.45)");
+  halo.addColorStop(1, "rgba(251, 100, 60, 0)");
+  ctx.fillStyle = halo;
+  ctx.beginPath();
+  ctx.arc(x, y, r * 2.0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.save();
+  ctx.translate(x, y);
+
+  // Stationary bulk hull — angular cruiser with gun batteries pointing out
+  ctx.fillStyle = "#2a0e08";
+  ctx.strokeStyle = "rgba(254, 215, 170, 0.7)";
+  ctx.lineWidth = 1.6;
+  ctx.beginPath();
+  // 6 gun batteries radiating from a hex center
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2;
+    const x1 = Math.cos(a) * r * 0.45;
+    const y1 = Math.sin(a) * r * 0.45;
+    const x2 = Math.cos(a) * r * 1.05;
+    const y2 = Math.sin(a) * r * 1.05;
+    if (i === 0) ctx.moveTo(x1, y1);
+    else ctx.lineTo(x1, y1);
+    // Spike out
+    ctx.lineTo(x2, y2);
+    // Slight side
+    const px = -Math.sin(a) * r * 0.16;
+    const py = Math.cos(a) * r * 0.16;
+    ctx.lineTo(x2 - px * 0.3, y2 - py * 0.3);
+    // Back to next vertex
+    const aNext = ((i + 1) / 6) * Math.PI * 2;
+    ctx.lineTo(Math.cos(aNext) * r * 0.45, Math.sin(aNext) * r * 0.45);
+  }
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  // Central command core
+  ctx.fillStyle = "#7a1614";
+  ctx.beginPath();
+  ctx.arc(0, 0, r * 0.42, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(255, 215, 170, 0.7)";
+  ctx.lineWidth = 1.4;
+  ctx.stroke();
+
+  // Charging fire — pulse intensifies as nextFireAtMs approaches
+  const timeToFire = Math.max(0, p.nextFireAtMs - world.wallMs);
+  const charge = Math.max(0, 1 - timeToFire / 3000);
+  ctx.fillStyle = `rgba(255, 220, 120, ${(0.5 + charge * 0.45).toFixed(3)})`;
+  ctx.beginPath();
+  ctx.arc(0, 0, r * 0.18 * (1 + charge * 0.5), 0, Math.PI * 2);
+  ctx.fill();
+
+  // Gun-tip warning glow on each spike
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2;
+    const tx = Math.cos(a) * r * 1.05;
+    const ty = Math.sin(a) * r * 1.05;
+    ctx.fillStyle = `rgba(255, 140, 80, ${(0.5 + 0.5 * Math.sin(t * 0.2 + i)).toFixed(3)})`;
+    ctx.beginPath();
+    ctx.arc(tx, ty, r * 0.08, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.restore();
+
+  // Virion projectiles — small streaking missiles
+  for (const v of p.virions) {
+    const age = (world.wallMs - v.bornMs) / 1800;
+    const alpha = Math.max(0.3, 1 - age * 0.6);
+    const speed = Math.hypot(v.vx, v.vy);
+    if (speed > 0.01) {
+      const ux = v.vx / speed;
+      const uy = v.vy / speed;
+      // Trail
+      ctx.strokeStyle = `rgba(255, 140, 80, ${(alpha * 0.6).toFixed(3)})`;
+      ctx.lineWidth = 2;
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(v.x - ux * 14, v.y - uy * 14);
+      ctx.lineTo(v.x, v.y);
+      ctx.stroke();
+      ctx.lineCap = "butt";
+    }
+    // Warhead
+    ctx.fillStyle = `rgba(255, 240, 200, ${alpha.toFixed(3)})`;
+    ctx.beginPath();
+    ctx.arc(v.x, v.y, 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+// ── Scout Swarm (drawCiliate replacement) ────────────────────────────
+
+function drawScoutSwarm(ctx: CanvasRenderingContext2D, world: World): void {
+  const c = world.ciliate;
+  if (!c) return;
+  const t = world.tickN;
+  const body = c.body;
+  const x = body.x ?? 0;
+  const y = body.y ?? 0;
+  const r = body.radius;
+  const angle = Math.atan2(body.vy ?? 0, body.vx ?? 0) || 0;
+
+  // Hostile halo
+  const halo = ctx.createRadialGradient(x, y, r * 0.5, x, y, r * 2.0);
+  halo.addColorStop(0, "rgba(251, 191, 36, 0.32)");
+  halo.addColorStop(1, "rgba(251, 191, 36, 0)");
+  ctx.fillStyle = halo;
+  ctx.beginPath();
+  ctx.arc(x, y, r * 2.0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angle);
+
+  // Lead carrier ship
+  ctx.fillStyle = "#3a1607";
+  ctx.strokeStyle = "rgba(254, 215, 170, 0.7)";
+  ctx.lineWidth = 1.4;
+  ctx.beginPath();
+  ctx.moveTo(r * 1.0, 0);
+  ctx.lineTo(-r * 0.5, -r * 0.7);
+  ctx.lineTo(-r * 0.2, 0);
+  ctx.lineTo(-r * 0.5, r * 0.7);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  // Cockpit
+  const cockpit = ctx.createRadialGradient(r * 0.3, 0, 0, r * 0.3, 0, r * 0.3);
+  cockpit.addColorStop(0, "rgba(251, 191, 36, 0.95)");
+  cockpit.addColorStop(1, "rgba(120, 53, 15, 0.6)");
+  ctx.fillStyle = cockpit;
+  ctx.beginPath();
+  ctx.ellipse(r * 0.3, 0, r * 0.32, r * 0.22, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  // Ring of small drone scouts orbiting the carrier
+  const orbitRadius = r * 1.3;
+  const droneCount = 8;
+  for (let i = 0; i < droneCount; i++) {
+    const da = (i / droneCount) * Math.PI * 2 + t * 0.025;
+    const dx = x + Math.cos(da) * orbitRadius;
+    const dy = y + Math.sin(da) * orbitRadius;
+    // Drone body
+    ctx.fillStyle = "#5c2a08";
+    ctx.strokeStyle = "rgba(254, 215, 170, 0.7)";
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.ellipse(dx, dy, 4, 3, da, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    // Glow eye
+    ctx.fillStyle = "rgba(255, 220, 100, 0.95)";
+    ctx.beginPath();
+    ctx.arc(dx + Math.cos(da) * 1.5, dy + Math.sin(da) * 1.5, 1.2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Trail ribbon
+  ctx.strokeStyle = `rgba(255, 200, 120, ${(0.6 + 0.3 * Math.sin(t * 0.3)).toFixed(3)})`;
+  ctx.lineWidth = 1.4;
+  ctx.beginPath();
+  ctx.moveTo(x, y);
+  ctx.lineTo(x - Math.cos(angle) * r * 1.6, y - Math.sin(angle) * r * 1.6);
+  ctx.stroke();
+}
+
 // ── Bundle ───────────────────────────────────────────────────────────
 
 export const galacticOverrides: ThemeOverrides = {
@@ -850,7 +1253,12 @@ export const galacticOverrides: ThemeOverrides = {
   drawRegenGlow: drawEnergyRing,
   drawSurgeWake: drawWarpStreaks,
   drawSkirmisher: drawAlienFighter,
+  drawBrutePredator: drawBattlecruiser,
   drawCentipede: drawAlienDreadnought,
+  drawHiveQueen: drawMothership,
+  drawMirror: drawMimicCraft,
+  drawPhage: drawVirionCruiser,
+  drawCiliate: drawScoutSwarm,
   drawFreeCellShape: drawGalacticFreeCell,
 };
 

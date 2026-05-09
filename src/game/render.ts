@@ -1137,15 +1137,22 @@ export function drawPredators(ctx: CanvasRenderingContext2D, world: World): void
   // connect smoothly. Hive Queen draws its own queen + drones in a
   // single pass. Mirror gets a special bell render that mirrors the
   // player's morph.
+  const themeOverrides = currentTheme().overrides;
   if (world.centipede) {
-    const override = currentTheme().overrides?.drawCentipede;
-    if (override) override(ctx, world);
-    else drawCentipede(ctx, world);
+    (themeOverrides?.drawCentipede ?? drawCentipede)(ctx, world);
   }
-  if (world.hiveQueen) drawHiveQueen(ctx, world);
-  if (world.mirror) drawMirror(ctx, world);
-  if (world.phage) drawPhage(ctx, world);
-  if (world.ciliate) drawCiliate(ctx, world);
+  if (world.hiveQueen) {
+    (themeOverrides?.drawHiveQueen ?? drawHiveQueen)(ctx, world);
+  }
+  if (world.mirror) {
+    (themeOverrides?.drawMirror ?? drawMirror)(ctx, world);
+  }
+  if (world.phage) {
+    (themeOverrides?.drawPhage ?? drawPhage)(ctx, world);
+  }
+  if (world.ciliate) {
+    (themeOverrides?.drawCiliate ?? drawCiliate)(ctx, world);
+  }
   if (world.predators.length === 0) return;
   const t = world.tickN;
   for (const p of world.predators) {
@@ -1155,12 +1162,12 @@ export function drawPredators(ctx: CanvasRenderingContext2D, world: World): void
     if (p.bossKind === "tideMaw") continue;
     if (p.bossKind === "phage") continue;
     if (p.bossKind === "ciliate") continue;
-    if (p.bossKind === "abyssEye") drawAbyssEye(ctx, p, t);
-    else if (p.variant === "brute") drawBrutePredator(ctx, p, t);
-    else {
-      const override = currentTheme().overrides?.drawSkirmisher;
-      if (override) override(ctx, p, t);
-      else drawSkirmisherPredator(ctx, p, t);
+    if (p.bossKind === "abyssEye") {
+      (themeOverrides?.drawAbyssEye ?? drawAbyssEye)(ctx, p, t);
+    } else if (p.variant === "brute") {
+      (themeOverrides?.drawBrutePredator ?? drawBrutePredator)(ctx, p, t);
+    } else {
+      (themeOverrides?.drawSkirmisher ?? drawSkirmisherPredator)(ctx, p, t);
     }
   }
 }
