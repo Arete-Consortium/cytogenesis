@@ -697,8 +697,8 @@ export default function GameCanvas() {
           className="pointer-events-none absolute bottom-2 left-1/2 max-w-[92vw] -translate-x-1/2 rounded-full bg-black/55 px-3 py-1.5 text-center font-mono text-[10px] text-zinc-200/85 backdrop-blur-sm transition-opacity"
           style={{ bottom: "max(1rem, env(safe-area-inset-bottom))" }}
         >
-          <span className="hidden sm:inline">touch + drag to swim · click prey to pull · scroll to zoom</span>
-          <span className="sm:hidden">touch + drag to swim · pinch to zoom</span>
+          <span className="hidden sm:inline">touch + drag to {currentTheme().tutorial.swim} · attack button to fire · scroll to zoom</span>
+          <span className="sm:hidden">touch + drag to {currentTheme().tutorial.swim} · pinch to zoom</span>
         </div>
       )}
 
