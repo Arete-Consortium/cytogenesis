@@ -22,22 +22,23 @@ function drawCatCore(ctx: CanvasRenderingContext2D, world: World, core: Body): v
   const vx = core.vx ?? 0;
   const vy = core.vy ?? 0;
   const sp = Math.hypot(vx, vy);
-  // Body faces motion (head-forward); smooth lerp so course corrections
-  // don't snap.
+  // Subtle face tilt toward motion direction. Damped so course corrections
+  // don't snap. Reduced amplitude vs. old impl so the silhouette stays
+  // upright and recognizable as a face.
   if (sp > 0.4) {
-    const target = Math.atan2(vy, vx);
+    const target = Math.atan2(vy, vx) * 0.22;
     let delta = target - cachedCatAngle;
     while (delta > Math.PI) delta -= 2 * Math.PI;
     while (delta < -Math.PI) delta += 2 * Math.PI;
-    cachedCatAngle += delta * 0.15;
+    cachedCatAngle += delta * 0.12;
   }
 
   ctx.save();
   ctx.translate(x, y);
 
-  // Soft golden halo
+  // Soft golden halo so the white face still pops on dark backgrounds.
   const halo = ctx.createRadialGradient(0, 0, r * 0.4, 0, 0, r * 2.2);
-  halo.addColorStop(0, "rgba(255, 225, 150, 0.32)");
+  halo.addColorStop(0, "rgba(255, 225, 150, 0.35)");
   halo.addColorStop(1, "rgba(255, 225, 150, 0)");
   ctx.fillStyle = halo;
   ctx.beginPath();
@@ -46,168 +47,162 @@ function drawCatCore(ctx: CanvasRenderingContext2D, world: World, core: Body): v
 
   ctx.rotate(cachedCatAngle);
 
-  // Body — rounded rectangle (kotori-form lucky cat)
-  const bodyW = r * 1.7;
-  const bodyH = r * 1.35;
-  ctx.fillStyle = "#fff5d6";
-  ctx.strokeStyle = "rgba(140, 90, 30, 0.55)";
-  ctx.lineWidth = 1.4;
-  ctx.beginPath();
-  ctx.ellipse(0, r * 0.15, bodyW * 0.55, bodyH * 0.55, 0, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.stroke();
+  // ── Maneki-neko face — fills the full core radius ───────────────
+  // Scale everything to head fills the arena radius so the cat reads
+  // at game-distance. No body, no paw, no tail — face + ears + collar.
+  const headR = r * 1.2; // intentionally larger than core radius
+  const earBaseY = -headR * 0.45;
 
-  // Belly patch
-  ctx.fillStyle = "#ffe8a8";
-  ctx.beginPath();
-  ctx.ellipse(0, r * 0.4, bodyW * 0.3, bodyH * 0.32, 0, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Head
-  const headR = r * 0.78;
-  const headX = bodyW * 0.55;
-  const headY = -r * 0.35;
+  // Ears — drawn first so the head outline overlaps the ear bases cleanly.
   ctx.fillStyle = "#fff5d6";
-  ctx.beginPath();
-  ctx.arc(headX, headY, headR, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.stroke();
-
-  // Ears (triangles)
-  ctx.fillStyle = "#fff5d6";
+  ctx.strokeStyle = "rgba(120, 70, 20, 0.85)";
+  ctx.lineWidth = 1.6;
   for (const side of [-1, 1]) {
+    const earBaseInner = side * headR * 0.32;
+    const earBaseOuter = side * headR * 0.78;
+    const earTipX = side * headR * 0.6;
+    const earTipY = -headR * 1.18;
     ctx.beginPath();
-    ctx.moveTo(headX - headR * 0.2, headY - headR * 0.7 + side * headR * 0.05);
-    ctx.lineTo(headX - headR * 0.65, headY - headR * 1.05 + side * headR * 0.4);
-    ctx.lineTo(headX + headR * 0.05, headY - headR * 0.85 + side * headR * 0.55);
+    ctx.moveTo(earBaseInner, earBaseY);
+    ctx.lineTo(earTipX, earTipY);
+    ctx.lineTo(earBaseOuter, earBaseY + headR * 0.08);
     ctx.closePath();
     ctx.fill();
     ctx.stroke();
   }
-  // Inner ear pink
+  // Inner-ear pink
   ctx.fillStyle = "#ffb7c5";
   for (const side of [-1, 1]) {
+    const tipX = side * headR * 0.52;
+    const tipY = -headR * 1.0;
     ctx.beginPath();
-    ctx.ellipse(
-      headX - headR * 0.32,
-      headY - headR * 0.78 + side * headR * 0.18,
-      headR * 0.12,
-      headR * 0.22,
-      0,
-      0,
-      Math.PI * 2,
-    );
+    ctx.moveTo(side * headR * 0.36, earBaseY + headR * 0.08);
+    ctx.lineTo(tipX, tipY);
+    ctx.lineTo(side * headR * 0.62, earBaseY + headR * 0.05);
+    ctx.closePath();
     ctx.fill();
   }
 
-  // Eyes (closed/blinking — 8% blink rate)
-  const blink = (t % 240) < 8;
-  ctx.strokeStyle = "#1a1308";
-  ctx.lineWidth = 1.6;
+  // Head — main circle
+  ctx.fillStyle = "#fff5d6";
+  ctx.strokeStyle = "rgba(120, 70, 20, 0.9)";
+  ctx.lineWidth = 1.8;
+  ctx.beginPath();
+  ctx.arc(0, 0, headR, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  // Eyes — large round, with blink animation. Closed half the time
+  // gives the iconic squinty maneki look.
+  const blink = (t % 200) < 14;
+  const eyeY = -headR * 0.05;
+  const eyeOffset = headR * 0.34;
   for (const side of [-1, 1]) {
-    const ex = headX + headR * 0.05;
-    const ey = headY - headR * 0.05 + side * headR * 0.32;
+    const ex = side * eyeOffset;
     if (blink) {
+      ctx.strokeStyle = "#1a1308";
+      ctx.lineWidth = 2;
+      ctx.lineCap = "round";
       ctx.beginPath();
-      ctx.moveTo(ex - headR * 0.18, ey);
-      ctx.quadraticCurveTo(ex, ey + headR * 0.06, ex + headR * 0.18, ey);
+      ctx.moveTo(ex - headR * 0.13, eyeY);
+      ctx.quadraticCurveTo(ex, eyeY - headR * 0.05, ex + headR * 0.13, eyeY);
       ctx.stroke();
+      ctx.lineCap = "butt";
     } else {
       ctx.fillStyle = "#1a1308";
       ctx.beginPath();
-      ctx.ellipse(ex, ey, headR * 0.07, headR * 0.13, 0, 0, Math.PI * 2);
+      ctx.ellipse(ex, eyeY, headR * 0.11, headR * 0.16, 0, 0, Math.PI * 2);
+      ctx.fill();
+      // Catchlight
+      ctx.fillStyle = "rgba(255, 255, 255, 0.85)";
+      ctx.beginPath();
+      ctx.arc(ex - headR * 0.04, eyeY - headR * 0.06, headR * 0.04, 0, Math.PI * 2);
       ctx.fill();
     }
   }
-  // Nose
-  ctx.fillStyle = "#d97757";
-  ctx.beginPath();
-  ctx.arc(headX + headR * 0.45, headY, headR * 0.07, 0, Math.PI * 2);
-  ctx.fill();
 
-  // Whiskers
-  ctx.strokeStyle = "rgba(140, 90, 30, 0.55)";
+  // Pink cheek blush — reinforces the kawaii read
+  ctx.fillStyle = "rgba(255, 150, 170, 0.4)";
+  for (const side of [-1, 1]) {
+    ctx.beginPath();
+    ctx.ellipse(side * headR * 0.55, headR * 0.18, headR * 0.13, headR * 0.07, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Triangle nose
+  ctx.fillStyle = "#d96b8a";
+  ctx.strokeStyle = "rgba(140, 30, 60, 0.85)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(-headR * 0.07, headR * 0.18);
+  ctx.lineTo(headR * 0.07, headR * 0.18);
+  ctx.lineTo(0, headR * 0.27);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  // Mouth — small w-curve under the nose
+  ctx.strokeStyle = "#1a1308";
+  ctx.lineWidth = 1.4;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(0, headR * 0.27);
+  ctx.lineTo(0, headR * 0.32);
+  ctx.moveTo(0, headR * 0.32);
+  ctx.quadraticCurveTo(-headR * 0.08, headR * 0.42, -headR * 0.16, headR * 0.34);
+  ctx.moveTo(0, headR * 0.32);
+  ctx.quadraticCurveTo(headR * 0.08, headR * 0.42, headR * 0.16, headR * 0.34);
+  ctx.stroke();
+  ctx.lineCap = "butt";
+
+  // Whiskers — 3 per side, fan slightly
+  ctx.strokeStyle = "rgba(80, 50, 20, 0.7)";
   ctx.lineWidth = 1;
   for (const side of [-1, 1]) {
-    for (let i = 0; i < 2; i++) {
-      const wy = headY + side * (headR * 0.18 + i * headR * 0.12);
+    for (let i = 0; i < 3; i++) {
+      const baseY = headR * 0.22 + i * headR * 0.1;
       ctx.beginPath();
-      ctx.moveTo(headX + headR * 0.35, wy);
-      ctx.lineTo(headX + headR * 0.95, wy + side * headR * 0.05);
+      ctx.moveTo(side * headR * 0.32, baseY);
+      ctx.lineTo(side * headR * 0.95, baseY + (i - 1) * headR * 0.05);
       ctx.stroke();
     }
   }
 
-  // Red ribbon collar with bell
+  // Red ribbon collar across the bottom of the head
   ctx.fillStyle = "#dc2626";
-  ctx.strokeStyle = "rgba(120, 20, 20, 0.85)";
+  ctx.strokeStyle = "rgba(110, 15, 15, 0.9)";
   ctx.lineWidth = 1.2;
   ctx.beginPath();
-  ctx.ellipse(headX * 0.55, r * 0.05, bodyW * 0.32, r * 0.13, 0, 0, Math.PI * 2);
+  ctx.ellipse(0, headR * 0.78, headR * 0.78, headR * 0.16, 0, 0, Math.PI * 2);
   ctx.fill();
   ctx.stroke();
-  // Bell
-  const bellGrad = ctx.createRadialGradient(
-    headX * 0.45 + r * 0.05,
-    r * 0.0,
-    0,
-    headX * 0.45,
-    r * 0.05,
-    r * 0.16,
-  );
+
+  // Gold bell hanging at the bottom of the collar
+  const bellCY = headR * 0.92;
+  const bellR = headR * 0.18;
+  const bellGrad = ctx.createRadialGradient(-bellR * 0.3, bellCY - bellR * 0.3, 0, 0, bellCY, bellR);
   bellGrad.addColorStop(0, "#fff7c2");
-  bellGrad.addColorStop(1, "#d6a017");
+  bellGrad.addColorStop(0.6, "#f5c648");
+  bellGrad.addColorStop(1, "#a0750e");
   ctx.fillStyle = bellGrad;
+  ctx.strokeStyle = "rgba(80, 50, 0, 0.9)";
+  ctx.lineWidth = 1.2;
   ctx.beginPath();
-  ctx.arc(headX * 0.45, r * 0.05, r * 0.16, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.strokeStyle = "rgba(110, 70, 0, 0.7)";
-  ctx.lineWidth = 1;
-  ctx.stroke();
-
-  // Raised waving paw — opposite side of body, bobs with tickN
-  const wave = Math.sin(t * 0.18);
-  const pawAngle = -Math.PI * 0.25 + wave * 0.18;
-  const pawX = -bodyW * 0.35;
-  const pawY = -r * 0.15;
-  const pawTipX = pawX + Math.cos(pawAngle) * r * 0.85;
-  const pawTipY = pawY + Math.sin(pawAngle) * r * 0.85;
-  ctx.strokeStyle = "rgba(140, 90, 30, 0.55)";
-  ctx.lineWidth = 1.4;
-  ctx.fillStyle = "#fff5d6";
-  // Arm
-  ctx.beginPath();
-  ctx.lineWidth = r * 0.25;
-  ctx.lineCap = "round";
-  ctx.strokeStyle = "#fff5d6";
-  ctx.moveTo(pawX, pawY);
-  ctx.lineTo(pawTipX, pawTipY);
-  ctx.stroke();
-  ctx.lineWidth = 1.4;
-  ctx.strokeStyle = "rgba(140, 90, 30, 0.55)";
-  // Paw pad
-  ctx.fillStyle = "#fff5d6";
-  ctx.beginPath();
-  ctx.arc(pawTipX, pawTipY, r * 0.22, 0, Math.PI * 2);
+  ctx.arc(0, bellCY, bellR, 0, Math.PI * 2);
   ctx.fill();
   ctx.stroke();
-  // Pink toe beans
-  ctx.fillStyle = "#ffb7c5";
+  // Bell horizontal seam
+  ctx.strokeStyle = "rgba(80, 50, 0, 0.65)";
+  ctx.lineWidth = 0.8;
   ctx.beginPath();
-  ctx.arc(pawTipX, pawTipY, r * 0.1, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Tail (curled, behind body)
-  ctx.strokeStyle = "#fff5d6";
-  ctx.lineWidth = r * 0.28;
-  ctx.lineCap = "round";
-  ctx.beginPath();
-  ctx.moveTo(-bodyW * 0.5, r * 0.1);
-  ctx.quadraticCurveTo(-bodyW * 0.95, r * 0.4, -bodyW * 0.85, -r * 0.4);
+  ctx.moveTo(-bellR * 0.85, bellCY + bellR * 0.05);
+  ctx.lineTo(bellR * 0.85, bellCY + bellR * 0.05);
   ctx.stroke();
-  ctx.lineWidth = 1.4;
-  ctx.strokeStyle = "rgba(140, 90, 30, 0.55)";
-  ctx.lineCap = "butt";
+  // Bell vertical slit
+  ctx.beginPath();
+  ctx.moveTo(0, bellCY);
+  ctx.lineTo(0, bellCY + bellR * 0.7);
+  ctx.stroke();
 
   ctx.restore();
 }
