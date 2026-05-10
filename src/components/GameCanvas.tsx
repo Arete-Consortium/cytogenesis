@@ -28,6 +28,23 @@ const MUTE_KEY = "cytogenesis:muted";
 const TUTORIAL_KEY = "cytogenesis:tutorialSeen";
 const THEME_KEY = "cytogenesis:theme";
 
+const readStoredMuted = (): boolean => {
+  if (typeof window === "undefined") return false;
+  return localStorage.getItem(MUTE_KEY) === "1";
+};
+
+const readStoredTutorialVisible = (): boolean => {
+  if (typeof window === "undefined") return true;
+  return localStorage.getItem(TUTORIAL_KEY) !== "1";
+};
+
+const readStoredTheme = (): ThemeId => {
+  if (typeof window === "undefined") return "aquatic";
+  const saved = localStorage.getItem(THEME_KEY);
+  const validThemes: ThemeId[] = ["aquatic", "galactic", "sushi", "yokai"];
+  return (validThemes as string[]).includes(saved ?? "") ? (saved as ThemeId) : "aquatic";
+};
+
 interface FrameStats {
   fps: number;
   ms: number;
@@ -88,41 +105,34 @@ export default function GameCanvas() {
   const worldRef = useRef<World | null>(null);
   const [runId, setRunId] = useState(0);
   const [toasts, setToasts] = useState<Toast[]>([]);
-  const [muted, setMuted] = useState(false);
+  const [muted, setMuted] = useState(readStoredMuted);
   const [paused, setPaused] = useState(false);
   const [editorState, setEditorState] = useState<{
     open: boolean;
     selectedKind: string | null;
     offerings: string[];
   }>({ open: false, selectedKind: null, offerings: [] });
-  const [showTutorial, setShowTutorial] = useState(true);
+  const [showTutorial, setShowTutorial] = useState(readStoredTutorialVisible);
+  const showTutorialRef = useRef(showTutorial);
   const [bestResult, setBestResult] = useState<{ best: BestRun | null; isNewBest: boolean }>(
     { best: null, isNewBest: false },
   );
   const hasRecordedRef = useRef(false);
   // Ref-mirror so the rAF effect's pointer handler reads the live value
   // without re-mounting the World on tutorial dismissal.
-  const showTutorialRef = useRef(showTutorial);
   useEffect(() => {
     showTutorialRef.current = showTutorial;
   }, [showTutorial]);
 
-  // Initialize mute + tutorial + theme from localStorage on mount.
-  // SSR-safe hydration: deferring these reads to an effect avoids a
-  // hydration mismatch (server has no localStorage). The
-  // set-state-in-effect rule flags this, but it's the canonical pattern.
+  // Initialize theme from storage once.
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    const m = localStorage.getItem(MUTE_KEY) === "1";
-    audio.setMuted(m);
-    const saved = localStorage.getItem(THEME_KEY);
-    const validThemes: ThemeId[] = ["aquatic", "galactic", "sushi", "yokai"];
-    setTheme((validThemes as string[]).includes(saved ?? "") ? (saved as ThemeId) : "aquatic");
-    /* eslint-disable react-hooks/set-state-in-effect */
-    setMuted(m);
-    setShowTutorial(localStorage.getItem(TUTORIAL_KEY) !== "1");
-    /* eslint-enable react-hooks/set-state-in-effect */
+    setTheme(readStoredTheme());
   }, []);
+
+  // Keep audio mute state in sync with React state.
+  useEffect(() => {
+    audio.setMuted(muted);
+  }, [muted]);
 
   const selectEditorKind = (kind: string) => {
     audio.init();
@@ -189,10 +199,14 @@ export default function GameCanvas() {
 
   // Helper accessible inside the rAF loop to push a centered toast.
   const queueToast = (text: string) => {
-    const toast: Toast = { id: nextToastId++, text };
+    const toastId = nextToastId++;
+    const toast: Toast = {
+      id: toastId,
+      text,
+    };
     setToasts((prev) => [...prev, toast]);
     setTimeout(() => {
-      setToasts((prev) => prev.filter((t) => t.id !== toast.id));
+      setToasts((prev) => prev.filter((t) => t.id !== toastId));
     }, 1700);
   };
 
@@ -454,7 +468,7 @@ export default function GameCanvas() {
       // ocean fill on top of the cleared canvas.
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      drawBackground(ctx, width, height, world.tickN, world.biomeStage);
+      drawBackground(ctx, width, height, world.biomeStage);
       drawAmbientPlankton(ctx, width, height, world.tickN);
       ctx.save();
       applyCamera(ctx, world, dpr);

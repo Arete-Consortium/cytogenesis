@@ -31,17 +31,15 @@ const SLOTS: { id: ThemeId; label: string; ringActive: string; textActive: strin
 ];
 
 export default function ThemePicker() {
-  const [active, setActive] = useState<ThemeId>("aquatic");
+  const [active, setActive] = useState<ThemeId>(() => {
+    if (typeof window === "undefined") return "aquatic";
+    const saved = localStorage.getItem(THEME_KEY);
+    return isThemeId(saved) ? saved : "aquatic";
+  });
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    const saved = localStorage.getItem(THEME_KEY);
-    const id: ThemeId = isThemeId(saved) ? saved : "aquatic";
-    setTheme(id);
-    // SSR-safe hydration: mirror localStorage into React state on mount.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setActive(id);
-  }, []);
+    setTheme(active);
+  }, [active]);
 
   const choose = (id: ThemeId) => {
     setTheme(id);

@@ -21,7 +21,6 @@ export function drawBackground(
   ctx: CanvasRenderingContext2D,
   width: number,
   height: number,
-  _tickN = 0,
   biomeStage = 0,
 ): void {
   const T = currentTheme();
@@ -2215,7 +2214,6 @@ function drawCentipede(ctx: CanvasRenderingContext2D, world: World): void {
 // drones) and drawMirror (Amoeba bell-mimic) respectively, dispatched
 // from drawPredators above. The standalone drawSwarmLord/drawTideMaw
 // renderers from the pre-microbe revision were removed.
-
 /**
  * Abyss Eye — depth 60. Eldritch radial creature with a central eye
  * and 8 spinning tentacles. No directional rotation — radial body

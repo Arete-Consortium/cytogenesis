@@ -2324,6 +2324,7 @@ export class World {
 
   /** Legacy entry point; kept for back-compat with any external callers. */
   pruneFromGraph(_target: Body): void {
+    void _target;
     /* no-op under absorb-counter model */
   }
 
