@@ -41,7 +41,7 @@ export default function RootLayout({
     >
       <body className="min-h-full flex flex-col">
         {children}
-        <Analytics />
+        {process.env.NEXT_PUBLIC_ITCH_BUILD !== "1" && <Analytics />}
       </body>
     </html>
   );

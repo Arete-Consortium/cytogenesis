@@ -467,6 +467,7 @@ export class World {
   bossesDefeated: number;
   /** Index into BIOME_MILESTONES — only advances when a boss isn't already on the field. */
   private nextMilestoneIndex: number;
+  private transcendNotified = false;
   /** Active centipede boss; null between fights. */
   centipede: {
     level: number;
@@ -977,16 +978,19 @@ export class World {
    * cosmetic (biome darken, transcend toast).
    */
   private checkMilestones(): void {
+    // Transcend is independent of biome depths (which skip 80).
+    // Keep this latched if damage drops the player below the threshold.
+    if (!this.transcendNotified && this.totalAbsorbed >= TRANSCEND_AT) {
+      this.transcendNotified = true;
+      this.addShake(18);
+      this.events.push("transcend");
+    }
     while (this.nextMilestoneIndex < BIOME_MILESTONES.length) {
       const next = BIOME_MILESTONES[this.nextMilestoneIndex];
       if (this.totalAbsorbed < next) break;
       this.events.push(`biome:${next}` as WorldEvent);
       this.addShake(8);
       this.biomeStage = Math.min(this.biomeStage + 1, 4);
-      if (next === TRANSCEND_AT) {
-        this.addShake(18);
-        this.events.push("transcend");
-      }
       this.nextMilestoneIndex += 1;
     }
   }
@@ -2983,14 +2987,8 @@ export class World {
       this.recentCaptures = [];
     }
 
-    // Biome milestones — fire ONLY when the next-unfired threshold is
-    // met AND no boss is currently on the field. Otherwise queue. The
-    // player has to finish the current boss before the next biome
-    // event (and its boss) triggers.
+    // Biome and transcend milestones are independent of active bosses.
     this.checkMilestones();
-
-    // Transcend event is now folded into checkMilestones() so it's
-    // gated on boss-clear like every other biome milestone.
 
     this.emitSparkle(free.x ?? 0, free.y ?? 0, "rgba(160, 240, 255,");
     this.reheat(0.4);

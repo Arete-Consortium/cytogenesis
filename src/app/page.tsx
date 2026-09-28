@@ -1,8 +1,10 @@
 import Link from "next/link";
 import TitleStats from "@/components/TitleStats";
 import ThemePicker from "@/components/ThemePicker";
+import ItchGame from "@/components/ItchGame";
 
 export default function Home() {
+  if (process.env.NEXT_PUBLIC_ITCH_BUILD === "1") return <ItchGame />;
   return (
     <main className="flex flex-1 flex-col items-center justify-center gap-6 px-6 py-12 text-center sm:gap-8 sm:p-8">
       <h1 className="text-4xl font-semibold tracking-tight text-zinc-100 sm:text-5xl">

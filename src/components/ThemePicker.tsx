@@ -1,5 +1,8 @@
 "use client";
 
+import { readStorage } from "@/lib/storage";
+
+
 import { useEffect, useState } from "react";
 import { setTheme, THEMES, type ThemeId } from "@/data/themes";
 
@@ -33,7 +36,7 @@ const SLOTS: { id: ThemeId; label: string; ringActive: string; textActive: strin
 export default function ThemePicker() {
   const [active, setActive] = useState<ThemeId>(() => {
     if (typeof window === "undefined") return "aquatic";
-    const saved = localStorage.getItem(THEME_KEY);
+    const saved = readStorage(THEME_KEY);
     return isThemeId(saved) ? saved : "aquatic";
   });
 
