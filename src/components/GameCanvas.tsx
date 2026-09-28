@@ -1,8 +1,11 @@
 "use client";
 
+import { readStorage } from "@/lib/storage";
+
+
 import { useEffect, useRef, useState } from "react";
 import * as d3 from "d3";
-import { World } from "@/game/world";
+import { World, STAGE_THRESHOLDS } from "@/game/world";
 import {
   drawBackground,
   drawBodies,
@@ -30,17 +33,17 @@ const THEME_KEY = "cytogenesis:theme";
 
 const readStoredMuted = (): boolean => {
   if (typeof window === "undefined") return false;
-  return localStorage.getItem(MUTE_KEY) === "1";
+  return readStorage(MUTE_KEY) === "1";
 };
 
 const readStoredTutorialVisible = (): boolean => {
   if (typeof window === "undefined") return true;
-  return localStorage.getItem(TUTORIAL_KEY) !== "1";
+  return readStorage(TUTORIAL_KEY) !== "1";
 };
 
 const readStoredTheme = (): ThemeId => {
   if (typeof window === "undefined") return "aquatic";
-  const saved = localStorage.getItem(THEME_KEY);
+  const saved = readStorage(THEME_KEY);
   const validThemes: ThemeId[] = ["aquatic", "galactic", "sushi", "yokai"];
   return (validThemes as string[]).includes(saved ?? "") ? (saved as ThemeId) : "aquatic";
 };
@@ -217,6 +220,8 @@ export default function GameCanvas() {
     if (!ctx) return;
 
     const world = new World();
+    let awaitingFirstInput = true;
+    const heldKeys = new Set<string>();
     worldRef.current = world;
     setPaused(false);
     let hoveredId: string | null = null;
@@ -320,6 +325,7 @@ export default function GameCanvas() {
     // Stick anchor + clearStickInput were declared up-top before resize
     // so updateStickAnchor can reference pointerDownAt safely.
     const onPointerDown = (e: PointerEvent) => {
+      awaitingFirstInput = false;
       audio.init();
       if (showTutorialRef.current) dismissTutorial();
       activePointers.add(e.pointerId);
@@ -426,6 +432,45 @@ export default function GameCanvas() {
     };
     canvas.addEventListener("pointermove", onHoverCursor);
 
+    const moveKeys = new Set(["w", "a", "s", "d", "arrowup", "arrowleft", "arrowdown", "arrowright"]);
+    const onKeyDown = (event: KeyboardEvent) => {
+      const key = event.key.toLowerCase();
+      if (key === "escape" && !event.repeat && !world.editor.open && world.runStatus === "running") {
+        event.preventDefault();
+        heldKeys.clear();
+        clearStickInput();
+        world.paused = !world.paused;
+        setPaused(world.paused);
+        return;
+      }
+      // Preserve native keyboard activation and typing in focused UI controls.
+      if (event.target instanceof HTMLElement) {
+        if (event.target.closest("input, textarea, select, [contenteditable]")) return;
+        if (key === " " && event.target.closest("button, a")) return;
+      }
+      if (!moveKeys.has(key) && key !== " ") return;
+      event.preventDefault();
+      awaitingFirstInput = false;
+      audio.init();
+      if (showTutorialRef.current) dismissTutorial();
+      if (key === " ") {
+        if (!event.repeat && !world.paused) world.fireNearestStinger(performance.now());
+      } else heldKeys.add(key);
+    };
+    const onKeyUp = (event: KeyboardEvent) => {
+      heldKeys.delete(event.key.toLowerCase());
+      if (heldKeys.size === 0 && !pointerDownAt) clearStickInput();
+    };
+    const onBlur = () => {
+      heldKeys.clear();
+      clearStickInput();
+      world.paused = true;
+      setPaused(true);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", onBlur);
+
     // ── rAF loop ─────────────────────────────────────────────────────
     let raf = 0;
     let tick = 0;
@@ -459,8 +504,16 @@ export default function GameCanvas() {
         resize();
       }
 
-      world.tick(dt);
-      world.captureNearby();
+      if (heldKeys.size) {
+        const x = Number(heldKeys.has("d") || heldKeys.has("arrowright")) - Number(heldKeys.has("a") || heldKeys.has("arrowleft"));
+        const y = Number(heldKeys.has("s") || heldKeys.has("arrowdown")) - Number(heldKeys.has("w") || heldKeys.has("arrowup"));
+        const length = Math.hypot(x, y);
+        world.stickInput = length ? { ux: x / length, uy: y / length, t: 1 } : null;
+      }
+      if (!awaitingFirstInput && !document.hidden) {
+        world.tick(Math.min(dt, 100));
+        world.captureNearby();
+      }
 
       // Reset transform to identity + clear the entire canvas. With
       // 1:1 sizing this guarantees no leftover pixels from the
@@ -496,7 +549,10 @@ export default function GameCanvas() {
           else if (ev === "hit") audio.hit();
           else if (ev === "lockOn") audio.lockOn();
           else if (ev === "telegraph") audio.telegraph();
-          else if (ev === "transcend") audio.transcend();
+          else if (ev === "transcend") {
+            audio.transcend();
+            queueToast("TRANSCENDED · KEEP GROWING");
+          }
           else if (ev === "death") audio.death();
           else if (typeof ev === "string" && ev.startsWith("trait:")) {
             audio.trait();
@@ -611,6 +667,9 @@ export default function GameCanvas() {
       cancelAnimationFrame(raf);
       window.removeEventListener("resize", resize);
       window.removeEventListener("orientationchange", resize);
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", onBlur);
       canvas.removeEventListener("pointermove", onHoverCursor);
       canvas.removeEventListener("pointerdown", onPointerDown, true);
       canvas.removeEventListener("pointermove", onPointerMoveStick, true);
@@ -626,29 +685,39 @@ export default function GameCanvas() {
     hasRecordedRef.current = false;
     setBestResult({ best: null, isNewBest: false });
     setToasts([]);
+    setEditorState({ open: false, selectedKind: null, offerings: [] });
+    setStats((previous) => ({ ...previous, captured: 0, bonds: 0, predators: 0,
+      runStatus: "running", runDurationMs: 0, peakCaptured: 0, overlayReady: false,
+      traits: emptyTraitState(), comboActive: false, comboCount: 0 }));
     setRunId((r) => r + 1);
   };
 
   const traitList = Array.from(stats.traits.active);
+  const nextEvolution = STAGE_THRESHOLDS.find((threshold) => threshold > stats.captured);
+  const coreExposed = stats.captured === 0 && stats.predators > 0 && stats.runStatus === "running";
 
   return (
     <div className="relative h-full w-full">
       <canvas ref={canvasRef} className="absolute inset-0 h-full w-full touch-none select-none" />
-      {/* Top-right: timer (small), captured count, trait chips. */}
+      {/* Keep progress below the control row, away from the boss bar. */}
       <div
-        className="pointer-events-none absolute right-2 top-2 flex flex-col items-end gap-1.5 font-mono text-[11px] text-zinc-300/90"
+        className="pointer-events-none absolute left-2 top-16 flex max-w-[55%] flex-col items-start gap-1.5 font-mono text-[11px] text-zinc-300/90"
         style={{
-          top: "max(0.5rem, env(safe-area-inset-top))",
-          right: "max(0.75rem, env(safe-area-inset-right))",
+          top: "max(6rem, calc(4vw + 2rem))",
+          left: "max(0.75rem, env(safe-area-inset-left))",
         }}
       >
-        <div className="text-[10px] uppercase tracking-wider text-zinc-500">
+        <div className="text-[11px] uppercase tracking-wider text-zinc-300">
           {formatDuration(stats.runDurationMs)}
         </div>
         <div className="text-zinc-200">
           <span className="text-cyan-300">{stats.captured}</span>
-          <span className="text-zinc-600"> absorbed</span>
+          <span className="text-zinc-300"> absorbed</span>
         </div>
+        <div className="rounded bg-black/65 px-2 py-1 text-xs text-cyan-100">
+          {nextEvolution ? `Next evolution: ${stats.captured} / ${nextEvolution}` : "Transcended · survive and grow"}
+        </div>
+        {coreExposed && <div role="status" className="max-w-48 rounded bg-black/75 px-2 py-1 text-xs text-red-200">Core exposed — absorb cells to recover</div>}
         {(stats.comboActive || stats.comboCount >= 2) && (
           <div
             className={`rounded-full px-2 py-0.5 text-[10px] font-semibold tracking-wide ${
@@ -661,7 +730,7 @@ export default function GameCanvas() {
           </div>
         )}
         {traitList.length > 0 && (
-          <div className="flex flex-wrap justify-end gap-1">
+          <div className="flex flex-wrap justify-start gap-1">
             {traitList.map((id) => (
               <span
                 key={id}
@@ -683,7 +752,7 @@ export default function GameCanvas() {
       </div>
 
       {/* Near-death warning: pulsing red vignette when stripped to core. */}
-      {stats.captured === 1 && stats.runStatus === "running" && (
+      {coreExposed && (
         <div className="pointer-events-none absolute inset-0 z-10 animate-vignette-pulse" />
       )}
 
@@ -691,7 +760,7 @@ export default function GameCanvas() {
       {stats.predators > 0 && (
         <div
           className="pointer-events-none absolute left-1/2 -translate-x-1/2 font-mono text-[10px] uppercase tracking-[0.2em] text-red-400/80"
-          style={{ top: "calc(max(0.5rem, env(safe-area-inset-top)) + 0.25rem)" }}
+          style={{ bottom: "max(3.25rem, env(safe-area-inset-bottom))" }}
         >
           predator · {stats.predators}
         </div>
@@ -703,8 +772,8 @@ export default function GameCanvas() {
           className="pointer-events-none absolute bottom-2 left-1/2 max-w-[92vw] -translate-x-1/2 rounded-full bg-black/55 px-3 py-1.5 text-center font-mono text-[10px] text-zinc-200/85 backdrop-blur-sm transition-opacity"
           style={{ bottom: "max(1rem, env(safe-area-inset-bottom))" }}
         >
-          <span className="hidden sm:inline">touch + drag to {currentTheme().tutorial.swim} · attack button to fire · scroll to zoom</span>
-          <span className="sm:hidden">touch + drag to {currentTheme().tutorial.swim} · pinch to zoom</span>
+          <span className="hidden sm:inline">WASD / arrows to move · Esc to pause · scroll to zoom</span>
+          <span className="sm:hidden">bottom-left stick to move · pinch to zoom</span>
         </div>
       )}
 
@@ -756,6 +825,9 @@ export default function GameCanvas() {
               ))}
             </div>
           )}
+          <p className="max-w-sm text-center text-sm text-zinc-300">
+            Absorb free cells to grow. Predator hits strip cells away; keep moving when your core is exposed.
+          </p>
           <button
             onClick={restart}
             className="mt-2 inline-flex h-12 min-w-[200px] items-center justify-center rounded-full border border-zinc-600 px-6 font-mono text-sm text-zinc-100 transition-colors hover:bg-zinc-800 active:bg-zinc-900"
@@ -784,16 +856,13 @@ export default function GameCanvas() {
 
       {/* Paused overlay (suppressed while body editor is open — the
           editor handles its own backdrop + UX). */}
-      {paused && !editorState.open && (
-        <button
-          onClick={togglePause}
-          className="absolute inset-0 z-35 flex items-center justify-center bg-black/55 backdrop-blur-sm"
-        >
-          <div className="flex flex-col items-center gap-2">
-            <div className="font-mono text-2xl uppercase tracking-[0.4em] text-zinc-200">paused</div>
-            <div className="font-mono text-[10px] uppercase tracking-[0.25em] text-zinc-500">tap to resume</div>
-          </div>
-        </button>
+      {paused && !editorState.open && !stats.overlayReady && (
+        <div className="absolute inset-0 z-35 flex flex-col items-center justify-center gap-5 bg-black/70 px-6 text-center backdrop-blur-sm">
+          <h2 className="font-mono text-2xl uppercase tracking-[0.3em] text-zinc-100">Paused</h2>
+          <p className="max-w-sm text-sm text-zinc-300">WASD / arrows or the bottom-left stick to move. Absorb free cells and avoid predators. Space fires once sensor + stinger unlock your attack.</p>
+          <button onClick={togglePause} className="h-12 min-w-48 rounded-full bg-cyan-200 px-6 font-mono text-sm text-zinc-950 hover:bg-cyan-100">Resume run</button>
+          <p className="text-xs text-zinc-400">Esc also resumes · your run is frozen</p>
+        </div>
       )}
 
       {/* Body editor — Spore-style. One-tap pick auto-places at next
@@ -862,9 +931,9 @@ export default function GameCanvas() {
       {showTutorial && stats.runStatus === "running" && (
         <div className="pointer-events-none absolute inset-0 z-15 flex items-end justify-center pb-32 sm:pb-40">
           <div className="animate-tutorial-pulse rounded-2xl border border-cyan-300/40 bg-black/40 px-6 py-4 text-center font-mono text-xs uppercase tracking-[0.2em] text-cyan-200 backdrop-blur-sm">
-            <div>drag anywhere to {currentTheme().tutorial.swim}</div>
+            <div>WASD / arrows or drag the bottom-left stick to {currentTheme().tutorial.swim}</div>
             <div className="mt-1 text-[10px] tracking-[0.15em] text-zinc-400 normal-case">
-              attack button appears once stingers lock on
+              absorb free cells · avoid predators · first evolution at 6
             </div>
           </div>
         </div>
@@ -872,18 +941,17 @@ export default function GameCanvas() {
 
       {/* Attack button — bottom-right, mirror of the thumbstick. Only
           visible once lock_on trait is active (sensor + stinger absorbed).
-          Dims during cooldown. Pointer events only — no click events so
-          touch+drag from the swim stick can't accidentally trigger it. */}
+          Dims during cooldown. Native click supports touch and keyboard activation. */}
       {stats.traits.lockOnRange > 0 && stats.runStatus === "running" && (
         <button
           type="button"
           aria-label="Attack — fire stinger at nearest predator"
-          disabled={!stats.lockOnReady}
-          onPointerDown={(e) => {
+          disabled={!stats.lockOnReady || paused || editorState.open}
+          onClick={(e) => {
             e.stopPropagation();
             const w = worldRef.current;
             if (!w) return;
-            w.fireNearestStinger(performance.now());
+            if (!w.paused) w.fireNearestStinger(performance.now());
           }}
           className={`absolute z-30 inline-flex h-16 w-16 items-center justify-center rounded-full font-mono text-[10px] uppercase tracking-[0.2em] backdrop-blur transition-colors active:scale-95 ${
             stats.lockOnReady
